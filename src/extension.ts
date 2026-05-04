@@ -7,6 +7,7 @@ import {
   createAutoPassband,
   normalizeDefaultPassbandLabel
 } from "./passband";
+import { formatEffectiveReferenceOhms, formatFileReferenceOhms } from "./impedanceDisplay";
 import {
   ChartPoint,
   ChartSeries,
@@ -308,6 +309,7 @@ async function renormalizeFromWebview(
   const model = buildPreviewModel(doc, state.fileLabel);
   await panel.webview.postMessage({
     type: "renormalizedPreview",
+    effectiveReferenceOhms: doc.referenceOhms,
     seriesRows: model.series.map((series) => series.rows),
     metricRows: model.metricRows ?? []
   });
@@ -431,8 +433,17 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
           ${ports}
         </div>
       </fieldset>
-      <span class="z0-reference">${escapeHtml(formatReferenceOhms(impedance.referenceOhms))}</span>
+      <span class="z0-info">
+        <span>${escapeHtml(formatFileReferenceOhms(impedance.referenceOhms))}</span>
+        <span id="effective-z0">${escapeHtml(formatEffectiveReferenceOhms(effectiveInitialReferenceOhms(impedance)))}</span>
+      </span>
   `;
+}
+
+function effectiveInitialReferenceOhms(impedance: PreviewImpedanceModel): number[] {
+  return impedance.referenceOhms.map((sourceOhms, index) =>
+    impedance.selectedPorts[index] ? impedance.defaultTargetOhms : sourceOhms
+  );
 }
 
 interface ChartGeometry {
@@ -605,6 +616,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const metricsTitle = document.getElementById("metrics-title");
     const targetOhmsInput = document.getElementById("target-ohms");
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
+    const effectiveZ0 = document.getElementById("effective-z0");
 
     startInput.min = String(chart.minFreq);
     startInput.max = String(chart.maxFreq);
@@ -742,6 +754,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     }
 
     function updateRenormalizedPreview(message) {
+      if (effectiveZ0 && Array.isArray(message.effectiveReferenceOhms)) {
+        effectiveZ0.textContent = formatReferenceOhms("Active Z0", message.effectiveReferenceOhms);
+      }
       updateChartSeries(message.seriesRows);
       currentMetricRows = hasMetricRows ? message.metricRows : [];
       updatePassband();
@@ -759,6 +774,18 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function linePoints(rows) {
       return rows.map((row) => x(row.freqGHz).toFixed(2) + "," + y(row.db).toFixed(2)).join(" ");
+    }
+
+    function formatReferenceOhms(label, referenceOhms) {
+      const values = referenceOhms.map((value) => formatOhm(value));
+      if (values.every((value) => value === values[0])) {
+        return label + ": " + values[0] + " Ohm";
+      }
+      return label + ": " + values.map((value, index) => "P" + (index + 1) + " " + value).join(", ") + " Ohm";
+    }
+
+    function formatOhm(value) {
+      return Number(value).toFixed(3).replace(/\\.?0+$/, "");
     }
 
     function clearMetrics(message) {
@@ -1052,21 +1079,6 @@ function formatRangeLabel(startGHz: number, stopGHz: number): string {
   return `${formatGHz(startGHz)}-${formatGHz(stopGHz)} GHz`;
 }
 
-function formatReferenceOhms(referenceOhms: readonly number[]): string {
-  const unique = Array.from(new Set(referenceOhms.map(formatOhm)));
-  if (unique.length === 1) {
-    return `File Z0: ${unique[0]} Ohm`;
-  }
-
-  const perPort = referenceOhms.map((value, index) => `P${index + 1} ${formatOhm(value)}`).join(", ");
-  return `File Z0: ${perPort} Ohm`;
-}
-
-function formatOhm(value: number): string {
-  const fixed = value.toFixed(3);
-  return fixed.replace(/\.?0+$/, "");
-}
-
 function formatGHz(value: number): string {
   const fixed = value.toFixed(3);
   return fixed.replace(/\.?0+$/, "");
@@ -1095,7 +1107,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .port-toggle-row { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
     .port-toggle { display: inline-flex; align-items: center; gap: 3px; min-height: 27px; padding: 0 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; }
     .port-toggle input { width: auto; margin: 0; padding: 0; }
-    .z0-reference { max-width: 320px; color: var(--vscode-descriptionForeground); font-size: 12px; align-self: center; }
+    .z0-info { display: grid; gap: 2px; max-width: 360px; color: var(--vscode-descriptionForeground); font-size: 12px; align-self: center; }
     .controls button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid var(--vscode-button-border, transparent); padding: 5px 10px; font: inherit; cursor: pointer; }
     .controls button:hover { background: var(--vscode-button-hoverBackground); }
     .controls button:disabled { color: var(--vscode-disabledForeground); background: var(--vscode-button-secondaryBackground); cursor: default; }
@@ -1105,20 +1117,20 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .preset-dropdown { position: relative; }
     .preset-menu-button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border-color: var(--vscode-panel-border); }
     .preset-menu-button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground)); }
-    .preset-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 260px; max-height: 320px; overflow: auto; padding: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); }
+    .preset-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 260px; max-height: 320px; overflow: auto; padding: 4px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: var(--vscode-dropdown-background, var(--vscode-editor-background, #1f1f1f)); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border, #555)); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); }
     .preset-menu[hidden] { display: none; }
     .preset-menu-row { display: grid; grid-template-columns: 1fr 30px; gap: 4px; align-items: stretch; margin-bottom: 3px; }
     .preset-menu-row.auto .preset-menu-item { grid-column: 1 / -1; }
     .preset-menu-item, .preset-menu-add, .preset-delete { font: inherit; border: 0; cursor: pointer; }
-    .preset-menu-item { display: grid; gap: 2px; justify-items: start; width: 100%; padding: 6px 8px; color: var(--vscode-dropdown-foreground); background: transparent; text-align: left; }
-    .preset-menu-item small { color: var(--vscode-descriptionForeground); font-size: 11px; }
-    .preset-menu-item:hover, .preset-menu-add:hover { background: var(--vscode-list-hoverBackground); }
-    .preset-menu-item.active { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
-    .preset-menu-item.active small { color: inherit; opacity: 0.82; }
+    .preset-menu-item { display: grid; gap: 2px; justify-items: start; width: 100%; padding: 6px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: transparent; text-align: left; }
+    .preset-menu-item small { color: var(--vscode-descriptionForeground, #b7b7b7); font-size: 11px; }
+    .preset-menu-item:hover, .preset-menu-add:hover { background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.18)); }
+    .preset-menu-item.active { color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: var(--vscode-list-inactiveSelectionBackground, rgba(127, 127, 127, 0.24)); outline: 1px solid var(--vscode-focusBorder, #5e9eff); outline-offset: -1px; }
+    .preset-menu-item.active small { color: var(--vscode-descriptionForeground, #d0d0d0); opacity: 1; }
     .preset-delete { min-width: 30px; color: var(--vscode-icon-foreground); background: transparent; }
     .preset-delete:hover:not(:disabled) { color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground); }
     .preset-delete:disabled { color: var(--vscode-disabledForeground); cursor: default; }
-    .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground); background: transparent; text-align: left; border-top: 1px solid var(--vscode-panel-border); }
+    .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: transparent; text-align: left; border-top: 1px solid var(--vscode-panel-border, #555); }
     .chart-wrap { border: 1px solid var(--vscode-panel-border); overflow: auto; background: var(--vscode-editor-background); }
     svg { display: block; width: min(100%, 1120px); height: auto; }
     .chart-bg { fill: var(--vscode-editor-background); }
