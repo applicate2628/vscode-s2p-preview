@@ -22,6 +22,7 @@ export interface ChartSeries {
   defaultVisible: boolean;
   selector?: TraceSelector;
   groupLabel?: string;
+  color?: string;
 }
 
 export interface PreviewImpedanceModel {
@@ -67,7 +68,8 @@ export function buildPreviewModelWithOverlays(
     traceSeries(doc, selector, index, {
       labelPrefix: shortFileLabel(fileLabel),
       groupLabel: shortFileLabel(fileLabel),
-      overlayIndex: undefined
+      overlayIndex: 0,
+      colorIndex: index
     })
   );
   const overlaySeries = overlays.flatMap((item, overlayIndex) =>
@@ -77,7 +79,8 @@ export function buildPreviewModelWithOverlays(
         traceSeries(item.doc, selector, index, {
           labelPrefix: shortFileLabel(item.fileLabel),
           groupLabel: shortFileLabel(item.fileLabel),
-          overlayIndex
+          overlayIndex: overlayIndex + 1,
+          colorIndex: (overlayIndex + 1) * selectors.length + index
         })
       )
   );
@@ -111,7 +114,8 @@ export function buildOverlayPreviewModel(docs: Array<{ doc: TouchstoneDocument; 
         traceSeries(item.doc, selector, index, {
           labelPrefix: shortFileLabel(item.fileLabel),
           groupLabel: shortFileLabel(item.fileLabel),
-          overlayIndex
+          overlayIndex,
+          colorIndex: overlayIndex * selectors.length + index
         })
       )
     ),
@@ -133,21 +137,30 @@ function traceSeries(
   doc: TouchstoneDocument,
   selector: TraceSelector,
   index: number,
-  options: { labelPrefix: string; groupLabel?: string; overlayIndex?: number }
+  options: { labelPrefix: string; groupLabel?: string; overlayIndex?: number; colorIndex?: number }
 ): ChartSeries {
   const label = traceSelectorLabel(selector);
   const baseClass = selectorCssClass(selector, index);
   const overlayClass = options.overlayIndex === undefined
     ? ""
     : ` overlay-line overlay-file-${options.overlayIndex % 8}`;
+  const color = options.colorIndex === undefined ? undefined : overlaySeriesColor(options.colorIndex);
   return {
     label: options.labelPrefix ? `${options.labelPrefix} ${label}` : label,
     cssClass: `${baseClass}${overlayClass}`,
     defaultVisible: defaultVisibleForSelector(doc.ports, selector),
     selector,
     groupLabel: options.groupLabel,
+    color,
     rows: traceDbRows(doc, selector)
   };
+}
+
+function overlaySeriesColor(index: number): string {
+  const hue = Math.round((index * 137.508) % 360);
+  const saturation = 74 + (index % 3) * 4;
+  const lightness = 44 + (index % 4) * 4;
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
 }
 
 function previewTitle(doc: TouchstoneDocument): string {

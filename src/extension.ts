@@ -6,7 +6,8 @@ import {
   createAutoPassband,
   normalizeDefaultPassbandLabel,
   sanitizePresetRenormalize,
-  sanitizePresetTraces
+  sanitizePresetTraces,
+  upsertPassbandPreset
 } from "./passband";
 import type { PassbandPreset, PassbandPresetRenormalize, PassbandPresetTrace } from "./passband";
 import { formatEffectiveReferenceOhms, formatFileReferenceOhms } from "./impedanceDisplay";
@@ -55,6 +56,7 @@ type WebviewMessage =
     type: "addPreset";
     startGHz: number;
     stopGHz: number;
+    activePresetLabel?: string;
     traces?: PassbandPresetTrace[];
     renormalize?: PassbandPresetRenormalize;
   }
@@ -308,6 +310,7 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
             panel,
             message.startGHz,
             message.stopGHz,
+            message.activePresetLabel,
             message.traces,
             message.renormalize
           );
@@ -365,6 +368,7 @@ async function addPresetFromWebview(
   panel: vscode.WebviewPanel,
   startGHz: number,
   stopGHz: number,
+  activePresetLabel: unknown,
   traces: unknown,
   renormalize: unknown
 ): Promise<void> {
@@ -375,18 +379,21 @@ async function addPresetFromWebview(
   }
 
   const settings = getPassbandSettings();
-  const suggestedLabel = formatRangeLabel(normalized.startGHz, normalized.stopGHz);
+  const activePreset = typeof activePresetLabel === "string" && activePresetLabel !== AUTO_PASSBAND_LABEL
+    ? settings.presets.find((preset) => preset.label === activePresetLabel)
+    : undefined;
+  const suggestedLabel = activePreset?.label ?? formatRangeLabel(normalized.startGHz, normalized.stopGHz);
   const label = await vscode.window.showInputBox({
     title: "Save S2P passband preset",
-    prompt: "Preset label",
+    prompt: "Preset label. Existing names update that preset.",
     value: suggestedLabel,
     validateInput: (value) => {
       const trimmed = value.trim();
       if (!trimmed) {
         return "Preset label is required.";
       }
-      if (settings.presets.some((preset) => preset.label === trimmed)) {
-        return "Preset label already exists.";
+      if (trimmed === AUTO_PASSBAND_LABEL) {
+        return "This preset label is reserved.";
       }
       return undefined;
     }
@@ -409,8 +416,13 @@ async function addPresetFromWebview(
   if (presetRenormalize) {
     nextPreset.renormalize = presetRenormalize;
   }
-  const nextPresets = [...settings.presets, nextPreset];
-  await updatePassbandSettings(panel, nextPresets, nextPreset.label, `Preset saved: ${nextPreset.label}`);
+  const result = upsertPassbandPreset(settings.presets, nextPreset);
+  await updatePassbandSettings(
+    panel,
+    result.presets,
+    nextPreset.label,
+    result.updated ? `Preset updated: ${nextPreset.label}` : `Preset saved: ${nextPreset.label}`
+  );
 }
 
 async function deletePresetFromWebview(panel: vscode.WebviewPanel, label: string): Promise<void> {
@@ -850,7 +862,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
         ${series.map((item, index) => {
           const key = traceKey(item.selector);
-          return `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""} points="${linePoints(item.rows, chart)}" />`;
+          return `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}${seriesStyleAttribute(item)} points="${linePoints(item.rows, chart)}" />`;
         }).join("")}
         <rect class="axis" x="${chart.margin.left}" y="${chart.margin.top}" width="${chart.plotWidth}" height="${chart.plotHeight}" />
         ${xTicks.map((tick) => `<text class="tick" x="${xCoord(tick, chart).toFixed(2)}" y="${chart.height - 28}" text-anchor="middle">${tick}</text>`).join("")}
@@ -916,10 +928,14 @@ function renderLegendItem(item: ChartSeries, index: number, label: string): stri
   const key = traceKey(item.selector);
   return `
     <div id="legend-${index}" class="legend-item${visibilityClass}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}>
-      <span class="legend-line ${escapeHtml(item.cssClass)}"></span>
+      <span class="legend-line ${escapeHtml(item.cssClass)}"${seriesStyleAttribute(item)}></span>
       <span>${escapeHtml(label)}</span>
     </div>
   `;
+}
+
+function seriesStyleAttribute(item: ChartSeries): string {
+  return item.color ? ` style="--trace-color: ${escapeHtml(item.color)}"` : "";
 }
 
 function legendTraceLabel(item: ChartSeries): string {
@@ -1402,7 +1418,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       const addButton = document.createElement("button");
       addButton.type = "button";
       addButton.className = "preset-menu-add";
-      addButton.textContent = "+ Add current view";
+      addButton.textContent = "Save current view...";
       addButton.addEventListener("click", () => {
         if (!currentRangeIsValid()) {
           status.textContent = "Cannot save invalid passband range.";
@@ -1413,6 +1429,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           type: "addPreset",
           startGHz: Number(startInput.value),
           stopGHz: Number(stopInput.value),
+          activePresetLabel,
           traces: currentTracePreset(),
           renormalize: currentRenormalizePreset()
         });
@@ -2023,15 +2040,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .trace-9 { stroke: #60a5fa; --trace-color: #60a5fa; }
     .trace-10 { stroke: #84cc16; --trace-color: #84cc16; }
     .trace-11 { stroke: #c084fc; --trace-color: #c084fc; }
-    .overlay-0 { stroke: #ef4444; }
-    .overlay-1 { stroke: #22c55e; }
-    .overlay-2 { stroke: #38bdf8; }
-    .overlay-3 { stroke: #f97316; }
-    .overlay-4 { stroke: #a855f7; }
-    .overlay-5 { stroke: #eab308; }
-    .overlay-6 { stroke: #14b8a6; }
-    .overlay-7 { stroke: #f472b6; }
-    .overlay-line { opacity: 0.85; stroke-width: 1.9; }
+    .overlay-line { stroke: var(--trace-color, var(--vscode-foreground)); opacity: 0.85; stroke-width: 1.9; }
     .overlay-file-1 { stroke-dasharray: 7 4; }
     .overlay-file-2 { stroke-dasharray: 2 4; }
     .overlay-file-3 { stroke-dasharray: 10 4 2 4; }

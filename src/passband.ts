@@ -34,6 +34,21 @@ export function normalizeDefaultPassbandLabel(presets: readonly PassbandPreset[]
   return AUTO_PASSBAND_LABEL;
 }
 
+export function upsertPassbandPreset(
+  presets: readonly PassbandPreset[],
+  preset: PassbandPreset
+): { presets: PassbandPreset[]; updated: boolean } {
+  const existingIndex = presets.findIndex((item) => item.label === preset.label);
+  if (existingIndex === -1) {
+    return { presets: [...presets, preset], updated: false };
+  }
+
+  return {
+    presets: presets.map((item, index) => (index === existingIndex ? preset : item)),
+    updated: true
+  };
+}
+
 export function createAutoPassband(rows: readonly { freqGHz: number }[]): PassbandPreset {
   const frequencies = rows
     .map((row) => row.freqGHz)

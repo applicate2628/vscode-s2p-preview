@@ -6,7 +6,8 @@ import {
   createAutoPassband,
   normalizeDefaultPassbandLabel,
   sanitizePresetRenormalize,
-  sanitizePresetTraces
+  sanitizePresetTraces,
+  upsertPassbandPreset
 } from "../passband";
 
 test("default preset list starts with 1-10 GHz", () => {
@@ -83,4 +84,27 @@ test("sanitizes renormalization presets", () => {
     }),
     undefined
   );
+});
+
+test("upserts passband presets by label", () => {
+  const existing = [
+    { label: "1-10 GHz", startGHz: 1, stopGHz: 10 },
+    { label: "2-4 GHz", startGHz: 2, stopGHz: 4 }
+  ];
+
+  const updated = upsertPassbandPreset(existing, {
+    label: "2-4 GHz",
+    startGHz: 2.1,
+    stopGHz: 3.9,
+    traces: [{ toPort: 2, fromPort: 1 }]
+  });
+  assert.equal(updated.updated, true);
+  assert.deepEqual(updated.presets, [
+    { label: "1-10 GHz", startGHz: 1, stopGHz: 10 },
+    { label: "2-4 GHz", startGHz: 2.1, stopGHz: 3.9, traces: [{ toPort: 2, fromPort: 1 }] }
+  ]);
+
+  const added = upsertPassbandPreset(existing, { label: "5-6 GHz", startGHz: 5, stopGHz: 6 });
+  assert.equal(added.updated, false);
+  assert.deepEqual(added.presets.map((preset) => preset.label), ["1-10 GHz", "2-4 GHz", "5-6 GHz"]);
 });

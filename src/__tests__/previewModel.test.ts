@@ -171,6 +171,7 @@ test("adds overlay traces to the current preview model instead of narrowing to o
     "base.s2p", "base.s2p", "base.s2p", "base.s2p",
     "overlay.s2p", "overlay.s2p", "overlay.s2p", "overlay.s2p"
   ]);
+  assert.equal(new Set(model.series.map((series) => overlayColor(series.color))).size, model.series.length);
   assert.deepEqual(
     model.series.filter((series) => series.defaultVisible).map((series) => series.label),
     ["base.s2p S11", "base.s2p S21", "base.s2p S22", "overlay.s2p S11", "overlay.s2p S21", "overlay.s2p S22"]
@@ -187,4 +188,9 @@ function buildOverlayPreviewModel(docs: Array<{ doc: ReturnType<typeof parseTouc
     assert.fail("buildOverlayPreviewModel should be exported");
   }
   return builder(docs);
+}
+
+function overlayColor(color: string | undefined): string {
+  assert.ok(color, "expected overlay color");
+  return color;
 }
