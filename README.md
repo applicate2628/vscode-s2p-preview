@@ -23,6 +23,16 @@ npm test
 npm run package
 ```
 
+## Release / Push Rule
+
+Every push to GitHub must include a version bump. Use the release script instead of running `git push` directly for normal publication:
+
+```powershell
+npm run release:patch
+```
+
+The script bumps the package patch version, updates the local VSIX filename in this README, runs tests, packages the extension, runs `npm audit`, commits the version bump, and pushes the current branch to the configured `origin`. It does not hardcode the GitHub owner; forks push to their own `origin`.
+
 ## Install Local VSIX
 
 ```powershell

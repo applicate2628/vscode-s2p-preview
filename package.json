@@ -106,7 +106,8 @@
     "compile": "tsc -p ./",
     "test": "npm run compile && node --test out/__tests__/*.test.js",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package --no-dependencies --readme-path README.marketplace.md"
+    "package": "npm run compile && vsce package --no-dependencies --readme-path README.marketplace.md",
+    "release:patch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-patch.ps1"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
