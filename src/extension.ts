@@ -447,13 +447,12 @@ function renderPreviewHtml(
   const defaultPreset = resolveInitialPassband(model, settings);
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
-  const controls = renderControls(defaultPreset, options.canPickOverlay === true);
-  const impedanceControls = model.impedance ? renderImpedanceControls(model.impedance, defaultPreset) : "";
+  const controls = renderControls(defaultPreset, options.canPickOverlay === true, model.impedance);
   const traceSelector = renderTraceSelector(model.series, defaultPreset);
   const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
-  const sidePanel = traceSelector || impedanceControls
-    ? `<aside class="side-panel" aria-label="Preview controls">${traceSelector}${impedanceControls}</aside>`
+  const sidePanel = traceSelector
+    ? `<aside class="side-panel" aria-label="Preview controls">${traceSelector}</aside>`
     : "";
 
   return htmlShell(
@@ -594,7 +593,11 @@ function selectedTraceKeysForPreset(
   return selected.size > 0 ? selected : undefined;
 }
 
-function renderControls(defaultPreset: PassbandPreset, canPickOverlay: boolean): string {
+function renderControls(
+  defaultPreset: PassbandPreset,
+  canPickOverlay: boolean,
+  impedance?: PreviewImpedanceModel
+): string {
   return `
     <section class="controls" aria-label="Passband controls">
       <label class="control-field">
@@ -613,6 +616,7 @@ function renderControls(defaultPreset: PassbandPreset, canPickOverlay: boolean):
         <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
       </div>
       ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
+      ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
       <span id="passband-status" role="status" aria-live="polite"></span>
     </section>
   `;
@@ -1595,15 +1599,20 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       min-width: 0;
     }
     .trace-controls,
-    .z0-card,
     .metrics,
     .chart-wrap {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
     }
-    .trace-controls,
-    .z0-card { padding: 12px; }
+    .trace-controls { padding: 12px; }
+    .z0-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px 14px;
+      align-items: end;
+      min-width: min(100%, 620px);
+    }
     .trace-controls fieldset,
     .z0-ports { min-width: 0; margin: 0; padding: 0; border: 0; }
     .trace-controls legend,
@@ -1655,7 +1664,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .trace-swatch { width: 15px; height: 3px; border-radius: 999px; background: var(--trace-color, var(--vscode-foreground)); }
     .port-target-row {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
       gap: 6px;
       margin-top: 10px;
     }
@@ -1678,9 +1687,9 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .z0-info {
       display: grid;
       gap: 4px;
-      margin-top: 10px;
       color: var(--muted);
       font-size: 12px;
+      min-width: 136px;
     }
     .series-hidden { display: none; }
     .preset-dropdown { position: relative; }
@@ -1748,6 +1757,8 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       .side-panel { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
       .preview-header { display: grid; }
       .header-summary { justify-content: flex-start; }
+      .z0-card { grid-template-columns: 1fr; width: 100%; }
+      .port-target-row { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
     }
   </style>
 </head>
@@ -1784,7 +1795,7 @@ function escapeHtml(value: string): string {
 }
 
 function jsonForScript(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
+  return JSON.stringify(value ?? null).replace(/</g, "\\u003c");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
