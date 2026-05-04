@@ -51,7 +51,7 @@ Both scripts bump the package patch version once for the batch, update the local
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.10.vsix
+code --install-extension .\vscode-s2p-preview-0.0.11.vsix
 ```
 
 ## Use
