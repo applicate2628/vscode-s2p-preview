@@ -11,11 +11,14 @@ import {
   ChartPoint,
   ChartSeries,
   PreviewModel,
+  buildOverlayPreviewModel,
   buildPreviewModel
 } from "./previewModel";
 import { S2pRow, parseTouchstone } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
+const OVERLAY_SELECTION_ERROR = "S2P Preview: select one or more Touchstone files first.";
+const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
 
 interface PassbandSettings {
   presets: PassbandPreset[];
@@ -49,6 +52,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
       attachWebviewMessageHandler(panel);
       await renderUriIntoWebview(targetUri, panel);
+    }),
+    vscode.commands.registerCommand("s2pPreview.openOverlay", async (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => {
+      await openOverlayPreview(uri, selectedUris);
     }),
     vscode.window.registerCustomEditorProvider(
       CUSTOM_EDITOR_VIEW_TYPE,
@@ -89,6 +95,74 @@ class S2pPreviewEditorProvider implements vscode.CustomReadonlyEditorProvider<S2
     attachWebviewMessageHandler(webviewPanel);
     await renderUriIntoWebview(document.uri, webviewPanel);
   }
+}
+
+async function openOverlayPreview(uri?: vscode.Uri, selectedUris?: vscode.Uri[]): Promise<void> {
+  const uris = selectedTouchstoneUris(uri, selectedUris);
+  if (uris.length === 0) {
+    vscode.window.showErrorMessage(OVERLAY_SELECTION_ERROR);
+    return;
+  }
+
+  try {
+    const docs = await Promise.all(uris.map(async (item) => {
+      const fileLabel = basename(item);
+      const bytes = await vscode.workspace.fs.readFile(item);
+      const text = new TextDecoder("utf-8").decode(bytes);
+      return {
+        doc: parseTouchstone(text, fileLabel),
+        fileLabel
+      };
+    }));
+    const model = buildOverlayPreviewModel(docs);
+    const panel = vscode.window.createWebviewPanel(
+      "s2pPreview",
+      `S2P Overlay: ${uris.length} files`,
+      vscode.ViewColumn.Beside,
+      {
+        enableScripts: true,
+        localResourceRoots: []
+      }
+    );
+
+    attachWebviewMessageHandler(panel);
+    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`S2P Preview: ${message}`);
+  }
+}
+
+function selectedTouchstoneUris(uri?: vscode.Uri, selectedUris?: vscode.Uri[]): vscode.Uri[] {
+  const candidates = selectedUris && selectedUris.length > 0
+    ? selectedUris
+    : uri
+      ? [uri]
+      : [];
+  const seen = new Set<string>();
+  const uris: vscode.Uri[] = [];
+
+  for (const item of candidates) {
+    if (!isTouchstoneUri(item)) {
+      continue;
+    }
+
+    const key = item.toString();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    uris.push(item);
+  }
+
+  return uris;
+}
+
+function isTouchstoneUri(uri: vscode.Uri): boolean {
+  const name = basename(uri).toLowerCase();
+  const dotIndex = name.lastIndexOf(".");
+  return dotIndex >= 0 && TOUCHSTONE_EXTENSIONS.has(name.slice(dotIndex));
 }
 
 function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
@@ -907,6 +981,14 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .s11 { stroke: #ef4444; }
     .s21 { stroke: #22c55e; }
     .s22 { stroke: #38bdf8; }
+    .overlay-0 { stroke: #ef4444; }
+    .overlay-1 { stroke: #22c55e; }
+    .overlay-2 { stroke: #38bdf8; }
+    .overlay-3 { stroke: #f97316; }
+    .overlay-4 { stroke: #a855f7; }
+    .overlay-5 { stroke: #eab308; }
+    .overlay-6 { stroke: #14b8a6; }
+    .overlay-7 { stroke: #f472b6; }
     table { border-collapse: collapse; min-width: 540px; }
     th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
     th { color: var(--vscode-descriptionForeground); font-weight: 600; }

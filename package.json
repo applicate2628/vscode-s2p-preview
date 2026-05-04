@@ -32,6 +32,7 @@
   ],
   "activationEvents": [
     "onCommand:s2pPreview.open",
+    "onCommand:s2pPreview.openOverlay",
     "onCustomEditor:s2pPreview.editor"
   ],
   "main": "./out/extension.js",
@@ -105,6 +106,10 @@
       {
         "command": "s2pPreview.open",
         "title": "S2P: Preview Current File"
+      },
+      {
+        "command": "s2pPreview.openOverlay",
+        "title": "S2P: Preview Selected Files Overlay"
       }
     ],
     "menus": {
@@ -120,6 +125,11 @@
           "command": "s2pPreview.open",
           "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
           "group": "navigation"
+        },
+        {
+          "command": "s2pPreview.openOverlay",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
+          "group": "navigation@2"
         }
       ]
     }

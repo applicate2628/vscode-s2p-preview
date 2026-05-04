@@ -60,6 +60,7 @@ S2P: Preview Current File
 ```
 
 You can also right-click a `.s1p`, `.s2p`, `.s3p`, or `.s4p` file in Explorer and run the same command.
+To compare selected files, multi-select Touchstone files in Explorer, right-click, and run `S2P: Preview Selected Files Overlay`.
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
 Use the preset dropdown to activate a preset, save the current range as a new preset, or delete a preset with the `x` at the end of its row.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
