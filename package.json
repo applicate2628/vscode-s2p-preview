@@ -1,0 +1,113 @@
+{
+  "name": "vscode-s2p-preview",
+  "displayName": "S2P Preview",
+  "description": "MVP Touchstone 1.0 S2P preview for RF simulation files.",
+  "version": "0.0.2",
+  "publisher": "applicate2628",
+  "license": "MPL-2.0",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:s2pPreview.open",
+    "onCustomEditor:s2pPreview.editor"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "S2P Preview",
+      "properties": {
+        "s2pPreview.passbandPresets": {
+          "type": "array",
+          "markdownDescription": "Named passband presets shown in the S2P preview.",
+          "default": [
+            {
+              "label": "1-10 GHz",
+              "startGHz": 1,
+              "stopGHz": 10
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "startGHz",
+              "stopGHz"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Preset label shown in the preview."
+              },
+              "startGHz": {
+                "type": "number",
+                "description": "Passband start frequency in GHz."
+              },
+              "stopGHz": {
+                "type": "number",
+                "description": "Passband stop frequency in GHz."
+              }
+            }
+          }
+        },
+        "s2pPreview.defaultPassbandPreset": {
+          "type": "string",
+          "markdownDescription": "Label of the passband preset used when opening the preview. Use `Auto / Full file range` to span the loaded file.",
+          "default": "Auto / Full file range"
+        }
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "s2pPreview.editor",
+        "displayName": "S2P Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.s2p"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "s2pPreview.open",
+        "title": "S2P: Preview Current File"
+      }
+    ],
+    "menus": {
+      "editor/title/context": [
+        {
+          "command": "s2pPreview.open",
+          "when": "resourceExtname == .s2p",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "s2pPreview.open",
+          "when": "resourceExtname == .s2p",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "test": "npm run compile && node --test out/__tests__/*.test.js",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.2",
+    "typescript": "^5.4.5"
+  }
+}
