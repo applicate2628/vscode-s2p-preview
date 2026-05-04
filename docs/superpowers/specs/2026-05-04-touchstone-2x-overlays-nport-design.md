@@ -1,8 +1,8 @@
-# Touchstone 2.x, Overlays, Smith Chart, and N-Port Roadmap Design
+# Touchstone 2.x, Overlays, PNG Export, and N-Port Roadmap Design
 
 ## Purpose
 
-`S2P Preview` should grow from a narrow `.s2p` magnitude preview into a small Touchstone viewer that stays useful for RF simulation review inside VS Code. The next work should add a proper Touchstone data model first, because the current parser immediately collapses each parameter pair into dB and loses the phase and port matrix data needed by Smith charts, overlays, and future `.s3p`/`.s4p` support.
+`S2P Preview` should grow from a narrow `.s2p` magnitude preview into a small Touchstone viewer that stays useful for RF simulation review inside VS Code. The next work should add a proper Touchstone data model first, because the current parser immediately collapses each parameter pair into dB and loses the phase and port matrix data needed by overlays, PNG export, and future `.s3p`/`.s4p` support.
 
 The first implementation slice is Touchstone `S`-parameter support only. `Y`, `Z`, `G`, and `H` parsing or conversion remain future work and should fail with a clear unsupported-parameter message until implemented.
 
@@ -11,7 +11,7 @@ The first implementation slice is Touchstone `S`-parameter support only. `Y`, `Z
 - The extension registers a custom editor for `*.s2p`.
 - `src/touchstone.ts` parses Touchstone option-line files and returns rows with `freqGHz`, `s11db`, `s21db`, `s12db`, and `s22db`.
 - `src/extension.ts` renders one SVG magnitude chart for `S11`, `S21`, and `S22`, passband controls, and quick passband metrics.
-- The current README explicitly lists Touchstone 2.0/2.1 keyword blocks, Smith chart, multi-file overlays, and PNG export as unsupported.
+- The current README explicitly lists Touchstone 2.0/2.1 keyword blocks, multi-file overlays, and PNG export as unsupported.
 
 ## External Format Facts
 
@@ -49,7 +49,7 @@ interface TouchstoneDocument {
 }
 ```
 
-Magnitude, phase, dB, VSWR-style future values, and Smith chart coordinates should be derived from this model rather than stored as the primary parser output. Existing passband metrics can be preserved by adapting them to selectors like `S21`, `S11`, and `S22`.
+Magnitude, phase, dB, VSWR-style future values, and overlay traces should be derived from this model rather than stored as the primary parser output. Existing passband metrics can be preserved by adapting them to selectors like `S21`, `S11`, and `S22`.
 
 ## Feature Order
 
@@ -59,13 +59,10 @@ Magnitude, phase, dB, VSWR-style future values, and Smith chart coordinates shou
 2. Multi-file overlays:
    Add a command to overlay selected Touchstone files on the existing dB chart. The first UI should compare the same trace selector across files, for example `S21` across `m_000.s2p` through `m_010.s2p`.
 
-3. Smith chart:
-   Add a view mode for reflection traces. For `.s2p`, default to `S11` and optionally `S22`. For `.s4p`, allow `S11`, `S22`, `S33`, and `S44` first. Transmission terms do not belong on the default Smith chart.
+3. PNG export:
+   Export the currently active chart state, including active trace selections, passband, overlays, and dB mode. SVG-to-canvas in the webview is acceptable if it preserves VS Code theme-independent colors.
 
-4. PNG export:
-   Export the currently active chart state, including active trace selections, passband, overlays, and Smith or dB mode. SVG-to-canvas in the webview is acceptable if it preserves VS Code theme-independent colors.
-
-5. Wider N-port UI:
+4. Wider N-port UI:
    Enable `.s3p`/`.s4p` UI through explicit trace selection, not by drawing every `Sij` by default.
 
 ## UI Behavior
@@ -75,7 +72,6 @@ The default experience should remain simple:
 - Opening a single `.s2p` still shows the current dB chart style and passband metrics.
 - Overlay mode should be opt-in through a command or button, not automatic for every sibling file.
 - The trace selector should start with common useful choices: `S11`, `S21`, `S22` for `.s2p`; reflection traces plus selected transmission traces for `.s3p`/`.s4p`.
-- Smith chart mode should not replace the magnitude chart; it should be a chart mode toggle.
 - PNG export should export what the user is looking at, not a separate hidden report layout.
 
 ## Error Handling
@@ -100,12 +96,12 @@ UI-adjacent tests should cover:
 - Deriving dB traces from complex values.
 - Preserving current passband metrics for `.s2p`.
 - Selecting one trace across multiple files for overlays.
-- Smith chart coordinate derivation from reflection coefficients.
 
 ## Out of Scope for the First Slice
 
 - Numeric conversion from `Y`, `Z`, `G`, or `H` to `S`.
 - Mixed-mode transformation UI.
+- Smith chart visualization.
 - Full generic `.sNp` visualization for arbitrary high port counts.
 - Publication or Marketplace release. Version bump and push remain a separate release step.
 
@@ -122,7 +118,6 @@ UI-adjacent tests should cover:
 - `PNG`: Portable Network Graphics, a raster image export format.
 - `RF`: radio frequency.
 - `S-parameter`: scattering parameter used for network behavior in RF and microwave systems.
-- `Smith chart`: a chart for complex reflection coefficients and impedance/admittance relationships.
 - `Touchstone 1.x`: option-line Touchstone files without Touchstone 2.x keyword blocks.
 - `Touchstone 2.x`: Touchstone 2.0 and 2.1 keyword-block files.
 - `VS Code`: Visual Studio Code.

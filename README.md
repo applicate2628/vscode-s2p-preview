@@ -13,7 +13,7 @@ MVP VS Code extension for quick Touchstone 1.0 `.s2p` preview for RF simulation 
 - Shows guide lines at `-3 dB`, `-15 dB`, and `-20 dB`.
 - Shows quick passband metrics for `S21` and `S11/S22`.
 
-Unsupported for MVP: Touchstone 2.0/2.1 keyword blocks, Smith chart, multi-file overlays, and PNG export.
+Unsupported for MVP: Touchstone 2.0/2.1 keyword blocks, multi-file overlays, and PNG export.
 
 ## Build
 

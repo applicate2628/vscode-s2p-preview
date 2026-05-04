@@ -699,7 +699,7 @@ In `README.md` and `README.marketplace.md`, replace the old support bullets with
 Replace the unsupported sentence with:
 
 ```md
-Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, Smith chart, PNG export, and generic high-port `.sNp` visualization.
+Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, PNG export, and generic high-port `.sNp` visualization.
 ```
 
 - [ ] **Step 4: Run metadata/package validation and commit Task 4**
@@ -984,6 +984,6 @@ Do not bump version and do not push in this task. Version bump and push are hand
 
 ## Self-Review
 
-- Spec coverage: Task 1 covers the complex data model; Task 2 covers Touchstone 2.0/2.1 keyword blocks and `.s3p`/`.s4p` parser behavior; Task 3 preserves current `.s2p` preview behavior; Task 4 exposes `.s1p` through `.s4p`; Task 5 adds opt-in multi-file overlays; Task 6 verifies package/install. Smith chart and PNG export are intentionally outside this plan and remain separate implementation slices from the approved design.
+- Spec coverage: Task 1 covers the complex data model; Task 2 covers Touchstone 2.0/2.1 keyword blocks and `.s3p`/`.s4p` parser behavior; Task 3 preserves current `.s2p` preview behavior; Task 4 exposes `.s1p` through `.s4p`; Task 5 adds opt-in multi-file overlays; Task 6 verifies package/install. PNG export is intentionally outside this plan and remains a separate implementation slice from the approved design. Smith chart visualization is explicitly excluded from this roadmap batch.
 - Placeholder scan: the plan contains concrete file paths, function names, commands, expected outcomes, and code snippets for each code-changing task.
 - Type consistency: parser types use `TouchstoneDocument`, `TouchstoneSample`, `ComplexValue`, `TraceSelector`, and `TraceDbRow`; extension rendering uses `PreviewModel` and `ChartSeries` derived from those parser surfaces.
