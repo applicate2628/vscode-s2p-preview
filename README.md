@@ -75,6 +75,7 @@ Preset add/delete actions update user settings by default. If the workspace alre
 
 Commercial licensing is available separately.
 Unless you have a separate commercial license agreement, this project is licensed under MPL-2.0.
+See `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyright and commercial licensing notice.
 
 ## Terms and Abbreviations
 

@@ -9,12 +9,25 @@
     "type": "git",
     "url": "https://github.com/applicate2628/vscode-s2p-preview.git"
   },
+  "homepage": "https://github.com/applicate2628/vscode-s2p-preview#readme",
+  "bugs": {
+    "url": "https://github.com/applicate2628/vscode-s2p-preview/issues"
+  },
+  "keywords": [
+    "touchstone",
+    "s2p",
+    "s-parameters",
+    "rf",
+    "microwave",
+    "visualization"
+  ],
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Visualization",
+    "Data Science",
     "Other"
   ],
   "activationEvents": [
