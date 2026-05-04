@@ -120,7 +120,9 @@
     "test": "npm run compile && node --test out/__tests__/*.test.js",
     "watch": "tsc -watch -p ./",
     "package": "npm run compile && vsce package --no-dependencies --readme-path README.marketplace.md",
-    "release:patch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-patch.ps1"
+    "release:patch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-patch.ps1",
+    "release:patch:ps1": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-patch.ps1",
+    "release:patch:bash": "bash scripts/release-patch.sh"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
