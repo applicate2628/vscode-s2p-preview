@@ -35,6 +35,7 @@ export interface PreviewModel {
   series: ChartSeries[];
   metricRows?: S2pRow[];
   impedance?: PreviewImpedanceModel;
+  warnings?: string[];
 }
 
 export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): PreviewModel {
@@ -64,7 +65,8 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
         }
       ],
       metricRows,
-      impedance: buildImpedanceModel(doc)
+      impedance: buildImpedanceModel(doc),
+      warnings: doc.warnings.slice()
     };
   }
 
@@ -73,7 +75,8 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
     title: `S${doc.ports}P Preview`,
     fileLabel,
     series: selectors.map((selector) => traceSeries(doc, selector)),
-    impedance: buildImpedanceModel(doc)
+    impedance: buildImpedanceModel(doc),
+    warnings: doc.warnings.slice()
   };
 }
 
@@ -94,7 +97,8 @@ export function buildOverlayPreviewModel(docs: Array<{ doc: TouchstoneDocument; 
       label: `${item.fileLabel} ${traceLabel}`,
       cssClass: `overlay-${index % 8}`,
       rows: traceDbRows(item.doc, selector)
-    }))
+    })),
+    warnings: docs.flatMap((item) => item.doc.warnings.map((warning) => `${item.fileLabel}: ${warning}`))
   };
 }
 

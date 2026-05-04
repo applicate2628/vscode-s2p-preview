@@ -22,6 +22,11 @@ export interface TouchstoneDocument {
   referenceOhms: number[];
   samples: TouchstoneSample[];
   sourceName: string;
+  warnings: string[];
+}
+
+export interface TouchstoneParseOptions {
+  allowIncompleteFinalSample?: boolean;
 }
 
 export interface TraceSelector {
@@ -83,6 +88,8 @@ interface TouchstoneParseState {
   options?: TouchstoneOptions;
   samples: TouchstoneSample[];
   pendingValues: number[];
+  warnings: string[];
+  skippedIncompleteFinalSample: boolean;
   numberOfFrequencies?: number;
   referenceValues?: number[];
   twoPortDataOrder?: TwoPortDataOrder;
@@ -100,12 +107,18 @@ const FREQ_SCALE_TO_GHZ: Record<string, number> = {
 
 const SUPPORTED_FORMATS: TouchstoneFormat[] = ["MA", "DB", "RI"];
 
-export function parseTouchstone(text: string, sourceName = "untitled.s2p"): TouchstoneDocument {
+export function parseTouchstone(
+  text: string,
+  sourceName = "untitled.s2p",
+  options: TouchstoneParseOptions = {}
+): TouchstoneDocument {
   const state: TouchstoneParseState = {
     version: "1.x",
     ports: inferPortCount(sourceName),
     samples: [],
     pendingValues: [],
+    warnings: [],
+    skippedIncompleteFinalSample: false,
     inNetworkData: false,
     sawNetworkData: false,
     endedNetworkData: false
@@ -120,7 +133,11 @@ export function parseTouchstone(text: string, sourceName = "untitled.s2p"): Touc
 
     const keywordLine = parseKeywordLine(withoutComment);
     if (keywordLine) {
-      assertNoPendingValues(state);
+      if (keywordLine.keyword === "end") {
+        handlePendingValuesAtBoundary(state, options);
+      } else {
+        assertNoPendingValues(state);
+      }
       applyKeywordLine(state, keywordLine);
       continue;
     }
@@ -155,12 +172,16 @@ export function parseTouchstone(text: string, sourceName = "untitled.s2p"): Touc
     throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
   }
   assertSupportedOptions(state.options);
-  assertNoPendingValues(state);
+  handlePendingValuesAtBoundary(state, options);
   if (state.samples.length === 0) {
     throw new Error("No Touchstone data rows found.");
   }
   if (state.numberOfFrequencies !== undefined && state.numberOfFrequencies !== state.samples.length) {
-    throw new Error(`[Number of Frequencies] expected ${state.numberOfFrequencies} samples, parsed ${state.samples.length}.`);
+    if (options.allowIncompleteFinalSample && state.skippedIncompleteFinalSample) {
+      state.warnings.push(`[Number of Frequencies] expected ${state.numberOfFrequencies} samples, parsed ${state.samples.length} after skipping incomplete final data.`);
+    } else {
+      throw new Error(`[Number of Frequencies] expected ${state.numberOfFrequencies} samples, parsed ${state.samples.length}.`);
+    }
   }
   if (state.twoPortDataOrder && state.ports !== 2) {
     throw new Error("[Two-Port Data Order] is valid only for 2-port Touchstone files.");
@@ -173,7 +194,8 @@ export function parseTouchstone(text: string, sourceName = "untitled.s2p"): Touc
     format: state.options.format,
     referenceOhms: referenceOhmsForState(state, state.options),
     samples: state.samples,
-    sourceName
+    sourceName,
+    warnings: state.warnings
   };
 }
 
@@ -367,6 +389,22 @@ function assertNoPendingValues(state: TouchstoneParseState): void {
   }
 }
 
+function handlePendingValuesAtBoundary(state: TouchstoneParseState, options: TouchstoneParseOptions): void {
+  if (state.pendingValues.length === 0) {
+    return;
+  }
+
+  if (!options.allowIncompleteFinalSample) {
+    assertNoPendingValues(state);
+    return;
+  }
+
+  const expectedValueCount = expectedNetworkValueCount(state.ports);
+  state.warnings.push(incompleteFinalSampleWarning(state, expectedValueCount, state.pendingValues.length));
+  state.pendingValues = [];
+  state.skippedIncompleteFinalSample = true;
+}
+
 function assertNoNetworkDataStarted(state: TouchstoneParseState, keyword: string): void {
   if (state.sawNetworkData || state.samples.length > 0) {
     throw new Error(`Touchstone keyword '${keyword}' must appear before [Network Data].`);
@@ -435,6 +473,29 @@ function valuesToSample(values: number[], ports: number, options: SupportedTouch
 
 function incompleteNetworkDataError(ports: number, expectedValueCount: number, foundValueCount: number): Error {
   return new Error(`Incomplete ${ports}-port Touchstone network data. Expected ${expectedValueCount} numeric values per sample, found ${foundValueCount}.`);
+}
+
+function incompleteFinalSampleWarning(
+  state: TouchstoneParseState,
+  expectedValueCount: number,
+  foundValueCount: number
+): string {
+  const freqLabel = formatPendingFrequencyGHz(state);
+  return `Skipped incomplete final ${state.ports}-port sample${freqLabel}. Expected ${expectedValueCount} numeric values per sample, found ${foundValueCount}.`;
+}
+
+function formatPendingFrequencyGHz(state: TouchstoneParseState): string {
+  const freqScale = state.options ? FREQ_SCALE_TO_GHZ[state.options.freqUnit] : undefined;
+  const freqValue = state.pendingValues[0];
+  if (!freqScale || !Number.isFinite(freqValue)) {
+    return "";
+  }
+
+  return ` at ${formatNumber(freqValue * freqScale)} GHz`;
+}
+
+function formatNumber(value: number): string {
+  return value.toFixed(6).replace(/\.?0+$/, "");
 }
 
 function unsupportedKeywordError(line: string): Error {

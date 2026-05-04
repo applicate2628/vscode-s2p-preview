@@ -173,7 +173,41 @@ test("throws a clear error for incomplete multi-line network data", () => {
   );
 });
 
+test("keeps strict mode for incomplete final network data", () => {
+  assert.throws(
+    () => parseTouchstone([
+      "# GHZ S RI R 50",
+      completeFourPortRiSample(1),
+      "2 0.1 0 0.2 0 0.3 0"
+    ].join("\n"), "broken.s4p"),
+    /Incomplete 4-port Touchstone network data/
+  );
+});
+
+test("can skip an incomplete final network sample with a warning", () => {
+  const doc = parseTouchstone([
+    "# GHZ S RI R 50",
+    completeFourPortRiSample(1),
+    "2 0.1 0 0.2 0 0.3 0"
+  ].join("\n"), "truncated.s4p", { allowIncompleteFinalSample: true });
+
+  assert.equal(doc.ports, 4);
+  assert.equal(doc.samples.length, 1);
+  assert.equal(doc.samples[0].freqGHz, 1);
+  assert.deepEqual(doc.warnings, [
+    "Skipped incomplete final 4-port sample at 2 GHz. Expected 33 numeric values per sample, found 7."
+  ]);
+});
+
 test("converts complex values to dB safely", () => {
   assert.equal(complexToDb({ re: 1, im: 0 }), 0);
   assert.equal(Number.isFinite(complexToDb({ re: 0, im: 0 })), true);
 });
+
+function completeFourPortRiSample(freqGHz: number): string {
+  const values: number[] = [freqGHz];
+  for (let index = 1; index <= 16; index += 1) {
+    values.push(index / 10, 0);
+  }
+  return values.join(" ");
+}

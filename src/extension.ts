@@ -24,6 +24,7 @@ import type { S2pRow, TouchstoneDocument } from "./touchstone";
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 const OVERLAY_SELECTION_ERROR = "S2P Preview: select one or more Touchstone files first.";
 const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
+const TOUCHSTONE_PARSE_OPTIONS = { allowIncompleteFinalSample: true };
 const activePreviewPanels = new Set<vscode.WebviewPanel>();
 const activePreviewDocuments = new Map<vscode.WebviewPanel, PreviewDocumentState>();
 
@@ -123,7 +124,7 @@ async function openOverlayPreview(uri?: vscode.Uri, selectedUris?: vscode.Uri[])
       const bytes = await vscode.workspace.fs.readFile(item);
       const text = new TextDecoder("utf-8").decode(bytes);
       return {
-        doc: parseTouchstone(text, fileLabel),
+        doc: parseTouchstone(text, fileLabel, TOUCHSTONE_PARSE_OPTIONS),
         fileLabel
       };
     }));
@@ -336,7 +337,7 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
     const text = new TextDecoder("utf-8").decode(bytes);
-    const doc = parseTouchstone(text, basename(uri));
+    const doc = parseTouchstone(text, basename(uri), TOUCHSTONE_PARSE_OPTIONS);
     const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
     activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false) });
     panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings());
@@ -355,6 +356,7 @@ function renderPreviewHtml(
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
   const controls = renderControls(defaultPreset, model.impedance);
+  const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
 
   return htmlShell(
@@ -365,6 +367,7 @@ function renderPreviewHtml(
       <p class="file">${escapeHtml(model.fileLabel)}</p>
     </header>
     ${controls}
+    ${warnings}
     ${chart}
     ${metricsTable}
   `,
@@ -388,6 +391,18 @@ function renderErrorHtml(webview: vscode.Webview, uri: vscode.Uri, error: unknow
     </section>
   `
   );
+}
+
+function renderWarnings(warnings: string[]): string {
+  if (warnings.length === 0) {
+    return "";
+  }
+
+  return `
+    <section class="warnings" aria-label="Touchstone warnings">
+      ${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
+    </section>
+  `;
 }
 
 function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpedanceModel): string {
@@ -1125,6 +1140,9 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .split-button { display: inline-grid; gap: 2px; justify-items: center; min-width: 86px; }
     .split-button small { color: inherit; font-size: 11px; line-height: 1.2; opacity: 0.82; }
     #passband-status { color: var(--vscode-inputValidation-warningForeground, var(--vscode-descriptionForeground)); min-height: 20px; align-self: center; }
+    .warnings { margin: 8px 0 10px; padding: 7px 9px; color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, var(--vscode-foreground))); background: var(--vscode-inputValidation-warningBackground, transparent); border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-border, var(--vscode-panel-border))); font-size: 12px; }
+    .warnings p { margin: 0; }
+    .warnings p + p { margin-top: 4px; }
     .preset-dropdown { position: relative; }
     .preset-menu-button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border-color: var(--vscode-panel-border); }
     .preset-menu-button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground)); }
