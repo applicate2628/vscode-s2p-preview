@@ -588,49 +588,92 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
   const selectableSeries = series
     .map((item, index) => ({ item, index }))
     .filter((entry) => entry.item.selector);
-  const portCount = Math.max(
-    0,
-    ...selectableSeries.flatMap((entry) => [
-      entry.item.selector?.toPort ?? 0,
-      entry.item.selector?.fromPort ?? 0
-    ])
-  );
 
-  if (portCount === 0 || selectableSeries.length === 0) {
+  if (selectableSeries.length === 0) {
     return "";
   }
 
-  const bySelector = new Map<string, { item: ChartSeries; indexes: number[] }>();
+  const matrixGroups = traceMatrixGroups(selectableSeries, preset);
+  const hasMultipleGroups = matrixGroups.length > 1;
+  const matrices = matrixGroups.map((group) => renderTraceMatrixGroup(group, hasMultipleGroups)).join("");
+
+  return `
+    <section class="trace-controls" aria-label="Visible S-parameters">
+      <fieldset>
+        <legend>S-Parameter Matrix</legend>
+        <p class="section-note">Choose traces to plot.</p>
+        ${matrices}
+      </fieldset>
+    </section>
+  `;
+}
+
+interface TraceMatrixGroup {
+  label?: string;
+  portCount: number;
+  entries: Array<{ item: ChartSeries; index: number }>;
+  selectedTraceKeys?: Set<string>;
+}
+
+function traceMatrixGroups(
+  selectableSeries: Array<{ item: ChartSeries; index: number }>,
+  preset: PassbandPreset
+): TraceMatrixGroup[] {
+  const groups: TraceMatrixGroup[] = [];
+  const byLabel = new Map<string, TraceMatrixGroup>();
+  const selectedTraceKeys = selectedTraceKeysForPreset(selectableSeries, preset);
+
   for (const entry of selectableSeries) {
-    const key = traceKey(entry.item.selector);
-    const existing = bySelector.get(key);
-    if (existing) {
-      existing.indexes.push(entry.index);
-    } else {
-      bySelector.set(key, { item: entry.item, indexes: [entry.index] });
+    const label = entry.item.groupLabel;
+    const key = label ?? "";
+    let group = byLabel.get(key);
+    if (!group) {
+      group = {
+        label,
+        portCount: 0,
+        entries: [],
+        selectedTraceKeys
+      };
+      byLabel.set(key, group);
+      groups.push(group);
     }
+
+    group.entries.push(entry);
+    group.portCount = Math.max(
+      group.portCount,
+      entry.item.selector?.toPort ?? 0,
+      entry.item.selector?.fromPort ?? 0
+    );
   }
 
-  const selectedTraceKeys = selectedTraceKeysForPreset(selectableSeries, preset);
+  return groups.filter((group) => group.portCount > 0 && group.entries.length > 0);
+}
+
+function renderTraceMatrixGroup(group: TraceMatrixGroup, showTitle: boolean): string {
+  const bySelector = new Map<string, { item: ChartSeries; index: number }>();
+  for (const entry of group.entries) {
+    bySelector.set(traceKey(entry.item.selector), entry);
+  }
+
   const header = [
     `<span class="trace-corner">to/from</span>`,
-    ...range(1, portCount, 1).map((port) => `<span class="trace-header">P${port}</span>`)
+    ...range(1, group.portCount, 1).map((port) => `<span class="trace-header">P${port}</span>`)
   ].join("");
-  const rows = range(1, portCount, 1).map((toPort) => [
+  const rows = range(1, group.portCount, 1).map((toPort) => [
     `<span class="trace-header">P${toPort}</span>`,
-    ...range(1, portCount, 1).map((fromPort) => {
+    ...range(1, group.portCount, 1).map((fromPort) => {
       const entry = bySelector.get(`${toPort}:${fromPort}`);
       if (!entry) {
         return `<span class="trace-empty"></span>`;
       }
 
       const key = `${toPort}:${fromPort}`;
-      const checked = selectedTraceKeys
-        ? selectedTraceKeys.has(key)
-        : entry.indexes.some((index) => series[index]?.defaultVisible);
+      const checked = group.selectedTraceKeys
+        ? group.selectedTraceKeys.has(key)
+        : entry.item.defaultVisible;
       return `
         <label class="trace-toggle">
-          <input type="checkbox" data-trace-key="${key}" data-trace-to="${toPort}" data-trace-from="${fromPort}" data-trace-default="${checked ? "true" : "false"}" ${checked ? "checked" : ""} />
+          <input type="checkbox" data-trace-series="${entry.index}" data-trace-key="${key}" data-trace-to="${toPort}" data-trace-from="${fromPort}" data-trace-default="${entry.item.defaultVisible ? "true" : "false"}" ${checked ? "checked" : ""} />
           <span class="trace-swatch ${escapeHtml(entry.item.cssClass)}"></span>
           <span>S${toPort}${fromPort}</span>
         </label>
@@ -639,16 +682,13 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
   ].join("")).join("");
 
   return `
-    <section class="trace-controls" aria-label="Visible S-parameters">
-      <fieldset>
-        <legend>S-Parameter Matrix</legend>
-        <p class="section-note">Choose traces to plot.</p>
-        <div class="trace-selector-grid" style="--trace-port-count: ${portCount}">
-          ${header}
-          ${rows}
-        </div>
-      </fieldset>
-    </section>
+    <div class="trace-matrix-block">
+      ${showTitle && group.label ? `<h3 class="trace-matrix-title">${escapeHtml(group.label)}</h3>` : ""}
+      <div class="trace-selector-grid" style="--trace-port-count: ${group.portCount}">
+        ${header}
+        ${rows}
+      </div>
+    </div>
   `;
 }
 
@@ -945,8 +985,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
-    const traceInputs = Array.from(document.querySelectorAll("[data-trace-key]"));
-    const seriesTraceItems = Array.from(document.querySelectorAll("[data-series-trace-key]"));
+    const traceInputs = Array.from(document.querySelectorAll("[data-trace-series]"));
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
     const targetOhmsInputs = Array.from(document.querySelectorAll("[data-z0-target]"));
     const effectiveZ0 = document.getElementById("effective-z0");
@@ -1111,15 +1150,18 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function updateTraceVisibility() {
       for (const input of traceInputs) {
-        const key = input.dataset.traceKey;
-        if (!key) {
+        const index = Number(input.dataset.traceSeries);
+        if (!Number.isInteger(index)) {
           continue;
         }
         const hidden = !input.checked;
-        for (const item of seriesTraceItems) {
-          if (item.dataset.seriesTraceKey === key) {
-            item.classList.toggle("series-hidden", hidden);
-          }
+        const curve = document.getElementById("series-" + index);
+        const legend = document.getElementById("legend-" + index);
+        if (curve) {
+          curve.classList.toggle("series-hidden", hidden);
+        }
+        if (legend) {
+          legend.classList.toggle("series-hidden", hidden);
         }
       }
     }
@@ -1151,13 +1193,23 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     }
 
     function currentTracePreset() {
-      return traceInputs
-        .filter((input) => input.checked)
-        .map((input) => ({
+      const traces = [];
+      const seen = new Set();
+      for (const input of traceInputs) {
+        if (!input.checked) {
+          continue;
+        }
+        const key = input.dataset.traceTo + ":" + input.dataset.traceFrom;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        traces.push({
           toPort: Number(input.dataset.traceTo),
           fromPort: Number(input.dataset.traceFrom)
-        }))
-        .filter((trace) => Number.isInteger(trace.toPort) && Number.isInteger(trace.fromPort));
+        });
+      }
+      return traces.filter((trace) => Number.isInteger(trace.toPort) && Number.isInteger(trace.fromPort));
     }
 
     function applyRenormalizePreset(renormalize) {
@@ -1719,6 +1771,17 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       margin: 4px 0 10px;
       color: var(--muted);
       font-size: 12px;
+    }
+    .trace-matrix-block + .trace-matrix-block {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .trace-matrix-title {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
     }
     .trace-selector-grid {
       display: grid;

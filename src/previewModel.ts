@@ -21,6 +21,7 @@ export interface ChartSeries {
   rows: ChartPoint[];
   defaultVisible: boolean;
   selector?: TraceSelector;
+  groupLabel?: string;
 }
 
 export interface PreviewImpedanceModel {
@@ -44,7 +45,7 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
     title: previewTitle(doc),
     fileLabel,
     series: defaultSelectorsForPortCount(doc.ports).map((selector, index) =>
-      traceSeries(doc, selector, index, { labelPrefix: "", overlayIndex: undefined })
+      traceSeries(doc, selector, index, { labelPrefix: "", groupLabel: undefined, overlayIndex: undefined })
     ),
     metricRows: doc.ports === 2 ? toS2pRows(doc) : undefined,
     impedance: buildImpedanceModel(doc),
@@ -65,6 +66,7 @@ export function buildPreviewModelWithOverlays(
   const baseSeries = selectors.map((selector, index) =>
     traceSeries(doc, selector, index, {
       labelPrefix: shortFileLabel(fileLabel),
+      groupLabel: shortFileLabel(fileLabel),
       overlayIndex: undefined
     })
   );
@@ -74,6 +76,7 @@ export function buildPreviewModelWithOverlays(
       .map((selector, index) =>
         traceSeries(item.doc, selector, index, {
           labelPrefix: shortFileLabel(item.fileLabel),
+          groupLabel: shortFileLabel(item.fileLabel),
           overlayIndex
         })
       )
@@ -107,6 +110,7 @@ export function buildOverlayPreviewModel(docs: Array<{ doc: TouchstoneDocument; 
       selectors.map((selector, index) =>
         traceSeries(item.doc, selector, index, {
           labelPrefix: shortFileLabel(item.fileLabel),
+          groupLabel: shortFileLabel(item.fileLabel),
           overlayIndex
         })
       )
@@ -129,7 +133,7 @@ function traceSeries(
   doc: TouchstoneDocument,
   selector: TraceSelector,
   index: number,
-  options: { labelPrefix: string; overlayIndex?: number }
+  options: { labelPrefix: string; groupLabel?: string; overlayIndex?: number }
 ): ChartSeries {
   const label = traceSelectorLabel(selector);
   const baseClass = selectorCssClass(selector, index);
@@ -141,6 +145,7 @@ function traceSeries(
     cssClass: `${baseClass}${overlayClass}`,
     defaultVisible: defaultVisibleForSelector(doc.ports, selector),
     selector,
+    groupLabel: options.groupLabel,
     rows: traceDbRows(doc, selector)
   };
 }

@@ -21,6 +21,7 @@ test("keeps two-port preview metrics and exposes the full S-parameter matrix", (
 
   assert.equal(model.title, "S2P Preview");
   assert.deepEqual(model.series.map((series) => series.label), ["S11", "S12", "S21", "S22"]);
+  assert.deepEqual(model.series.map((series) => series.groupLabel), [undefined, undefined, undefined, undefined]);
   assert.deepEqual(
     model.series.filter((series) => series.defaultVisible).map((series) => series.label),
     ["S11", "S21", "S22"]
@@ -165,6 +166,10 @@ test("adds overlay traces to the current preview model instead of narrowing to o
   assert.deepEqual(model.series.map((series) => series.label), [
     "base.s2p S11", "base.s2p S12", "base.s2p S21", "base.s2p S22",
     "overlay.s2p S11", "overlay.s2p S12", "overlay.s2p S21", "overlay.s2p S22"
+  ]);
+  assert.deepEqual(model.series.map((series) => series.groupLabel), [
+    "base.s2p", "base.s2p", "base.s2p", "base.s2p",
+    "overlay.s2p", "overlay.s2p", "overlay.s2p", "overlay.s2p"
   ]);
   assert.deepEqual(
     model.series.filter((series) => series.defaultVisible).map((series) => series.label),
