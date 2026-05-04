@@ -6,6 +6,7 @@ tsconfig.json
 .gitignore
 *.vsix
 node_modules/**
+test-results/**
 README.md
 README.marketplace.md
 media/*.svg

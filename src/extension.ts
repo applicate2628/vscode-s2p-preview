@@ -968,6 +968,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         }
       } else if (message.type === "operationStatus") {
         status.textContent = message.message;
+      } else if (message.type === "renormalizedPreview") {
+        updateRenormalizedPreview(message);
       }
     });
 
