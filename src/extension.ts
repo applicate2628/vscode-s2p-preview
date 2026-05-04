@@ -41,7 +41,7 @@ type WebviewMessage =
   | { type: "addPreset"; startGHz: number; stopGHz: number }
   | { type: "deletePreset"; label: string }
   | { type: "setDefaultPreset"; label: string }
-  | { type: "renormalize"; targetOhms: number; selectedPorts: boolean[] };
+  | { type: "renormalize"; targetOhms: number[]; selectedPorts: boolean[] };
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -297,7 +297,7 @@ async function broadcastPassbandSettings(statusPanel?: vscode.WebviewPanel, stat
 
 async function renormalizeFromWebview(
   panel: vscode.WebviewPanel,
-  targetOhms: number,
+  targetOhms: number[],
   selectedPorts: boolean[]
 ): Promise<void> {
   const state = activePreviewDocuments.get(panel);
@@ -415,21 +415,20 @@ function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpeda
 }
 
 function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
-  const ports = impedance.referenceOhms.map((_, index) => `
-        <label class="port-toggle">
-          <input type="checkbox" data-z0-port="${index}" ${impedance.selectedPorts[index] ? "checked" : ""} />
-          P${index + 1}
-        </label>
+  const ports = impedance.referenceOhms.map((sourceOhms, index) => `
+        <div class="port-target">
+          <label class="port-target-toggle">
+            <input type="checkbox" data-z0-port="${index}" ${impedance.selectedPorts[index] ? "checked" : ""} />
+            <span>P${index + 1}</span>
+          </label>
+          <input class="port-target-input" type="number" data-z0-target="${index}" aria-label="P${index + 1} target Z0 Ohm" value="${impedance.targetOhms[index] ?? sourceOhms}" min="0.001" step="1" />
+        </div>
       `).join("");
 
   return `
-      <label>
-        Target Z0, Ohm
-        <input id="target-ohms" type="number" value="${impedance.defaultTargetOhms}" min="0.001" step="1" />
-      </label>
       <fieldset class="z0-ports">
-        <legend>Renormalize ports</legend>
-        <div class="port-toggle-row">
+        <legend>Normalize Z0, Ohm</legend>
+        <div class="port-target-row">
           ${ports}
         </div>
       </fieldset>
@@ -442,7 +441,7 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
 
 function effectiveInitialReferenceOhms(impedance: PreviewImpedanceModel): number[] {
   return impedance.referenceOhms.map((sourceOhms, index) =>
-    impedance.selectedPorts[index] ? impedance.defaultTargetOhms : sourceOhms
+    impedance.selectedPorts[index] ? impedance.targetOhms[index] : sourceOhms
   );
 }
 
@@ -614,8 +613,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
-    const targetOhmsInput = document.getElementById("target-ohms");
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
+    const targetOhmsInputs = Array.from(document.querySelectorAll("[data-z0-target]"));
     const effectiveZ0 = document.getElementById("effective-z0");
 
     startInput.min = String(chart.minFreq);
@@ -736,20 +735,24 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     }
 
     function updateImpedancePreview() {
-      if (!impedance || !targetOhmsInput) {
+      if (!impedance || targetOhmsInputs.length === 0) {
         return;
       }
 
-      const targetOhms = Number(targetOhmsInput.value);
-      if (!Number.isFinite(targetOhms) || targetOhms <= 0) {
-        status.textContent = "Use a positive target impedance.";
+      const targetOhms = targetOhmsInputs.map((input) => Number(input.value));
+      const selectedPorts = portInputs.map((input) => input.checked);
+      const invalidIndex = targetOhms.findIndex((value, index) =>
+        selectedPorts[index] && (!Number.isFinite(value) || value <= 0)
+      );
+      if (invalidIndex !== -1) {
+        status.textContent = "Use a positive target impedance for P" + (invalidIndex + 1) + ".";
         return;
       }
 
       vscode.postMessage({
         type: "renormalize",
         targetOhms,
-        selectedPorts: portInputs.map((input) => input.checked)
+        selectedPorts
       });
     }
 
@@ -966,8 +969,14 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     startInput.addEventListener("input", updatePassband);
     stopInput.addEventListener("input", updatePassband);
-    if (targetOhmsInput) {
-      targetOhmsInput.addEventListener("input", updateImpedancePreview);
+    for (const input of targetOhmsInputs) {
+      input.addEventListener("input", () => {
+        const index = Number(input.dataset.z0Target);
+        if (Number.isInteger(index) && portInputs[index]) {
+          portInputs[index].checked = true;
+        }
+        updateImpedancePreview();
+      });
     }
     for (const input of portInputs) {
       input.addEventListener("change", updateImpedancePreview);
@@ -1104,9 +1113,11 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .controls input { width: 96px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); padding: 4px 6px; font: inherit; }
     .controls fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
     .controls legend { margin: 0 0 4px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .port-toggle-row { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
-    .port-toggle { display: inline-flex; align-items: center; gap: 3px; min-height: 27px; padding: 0 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; }
-    .port-toggle input { width: auto; margin: 0; padding: 0; }
+    .port-target-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 4px; max-width: 520px; }
+    .port-target { display: grid; grid-template-columns: auto 74px; align-items: center; gap: 4px; min-height: 27px; padding: 3px 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; }
+    .controls .port-target-toggle { display: inline-flex; align-items: center; gap: 3px; color: var(--vscode-foreground); font-size: 12px; }
+    .port-target-toggle input { width: auto; margin: 0; padding: 0; }
+    .controls .port-target-input { width: 62px; min-width: 0; padding: 3px 5px; }
     .z0-info { display: grid; gap: 2px; max-width: 360px; color: var(--vscode-descriptionForeground); font-size: 12px; align-self: center; }
     .controls button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid var(--vscode-button-border, transparent); padding: 5px 10px; font: inherit; cursor: pointer; }
     .controls button:hover { background: var(--vscode-button-hoverBackground); }
@@ -1121,16 +1132,17 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .preset-menu[hidden] { display: none; }
     .preset-menu-row { display: grid; grid-template-columns: 1fr 30px; gap: 4px; align-items: stretch; margin-bottom: 3px; }
     .preset-menu-row.auto .preset-menu-item { grid-column: 1 / -1; }
-    .preset-menu-item, .preset-menu-add, .preset-delete { font: inherit; border: 0; cursor: pointer; }
-    .preset-menu-item { display: grid; gap: 2px; justify-items: start; width: 100%; padding: 6px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: transparent; text-align: left; }
-    .preset-menu-item small { color: var(--vscode-descriptionForeground, #b7b7b7); font-size: 11px; }
-    .preset-menu-item:hover, .preset-menu-add:hover { background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.18)); }
-    .preset-menu-item.active { color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: var(--vscode-list-inactiveSelectionBackground, rgba(127, 127, 127, 0.24)); outline: 1px solid var(--vscode-focusBorder, #5e9eff); outline-offset: -1px; }
-    .preset-menu-item.active small { color: var(--vscode-descriptionForeground, #d0d0d0); opacity: 1; }
-    .preset-delete { min-width: 30px; color: var(--vscode-icon-foreground); background: transparent; }
-    .preset-delete:hover:not(:disabled) { color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground); }
-    .preset-delete:disabled { color: var(--vscode-disabledForeground); cursor: default; }
-    .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: transparent; text-align: left; border-top: 1px solid var(--vscode-panel-border, #555); }
+    .preset-menu .preset-menu-item, .preset-menu .preset-menu-add, .preset-menu .preset-delete { font: inherit; border: 0; background: transparent; cursor: pointer; }
+    .preset-menu .preset-menu-item { display: grid; gap: 2px; justify-items: start; width: 100%; padding: 6px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); text-align: left; }
+    .preset-menu .preset-menu-item small { color: var(--vscode-descriptionForeground, #b7b7b7); font-size: 11px; }
+    .preset-menu .preset-menu-item:hover, .preset-menu .preset-menu-add:hover { background: transparent; outline: 1px solid var(--vscode-focusBorder, #5e9eff); outline-offset: -1px; }
+    .preset-menu .preset-menu-item:focus-visible, .preset-menu .preset-menu-add:focus-visible, .preset-menu .preset-delete:focus-visible { outline: 1px solid var(--vscode-focusBorder, #5e9eff); outline-offset: -1px; }
+    .preset-menu .preset-menu-item.active { color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); background: transparent; box-shadow: inset 3px 0 0 var(--vscode-focusBorder, #5e9eff); outline: 1px solid var(--vscode-focusBorder, #5e9eff); outline-offset: -1px; }
+    .preset-menu .preset-menu-item.active small { color: var(--vscode-descriptionForeground, #d0d0d0); opacity: 1; }
+    .preset-menu .preset-delete { min-width: 30px; color: var(--vscode-icon-foreground); }
+    .preset-menu .preset-delete:hover:not(:disabled) { color: var(--vscode-errorForeground); background: transparent; outline: 1px solid var(--vscode-errorForeground); outline-offset: -1px; }
+    .preset-menu .preset-delete:disabled { color: var(--vscode-disabledForeground); cursor: default; }
+    .preset-menu .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); text-align: left; border-top: 1px solid var(--vscode-panel-border, #555); }
     .chart-wrap { border: 1px solid var(--vscode-panel-border); overflow: auto; background: var(--vscode-editor-background); }
     svg { display: block; width: min(100%, 1120px); height: auto; }
     .chart-bg { fill: var(--vscode-editor-background); }

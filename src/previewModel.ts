@@ -24,7 +24,7 @@ export interface ChartSeries {
 
 export interface PreviewImpedanceModel {
   referenceOhms: number[];
-  defaultTargetOhms: number;
+  targetOhms: number[];
   selectedPorts: boolean[];
   samples: TouchstoneSample[];
 }
@@ -117,11 +117,10 @@ function traceSeries(doc: TouchstoneDocument, selector: TraceSelector): ChartSer
 }
 
 function buildImpedanceModel(doc: TouchstoneDocument): PreviewImpedanceModel {
-  const defaultTargetOhms = doc.referenceOhms[0] ?? 50;
   return {
     referenceOhms: doc.referenceOhms.slice(),
-    defaultTargetOhms,
-    selectedPorts: doc.referenceOhms.map((value) => Math.abs(value - defaultTargetOhms) <= 1e-9),
+    targetOhms: doc.referenceOhms.slice(),
+    selectedPorts: doc.referenceOhms.map(() => false),
     samples: doc.samples.map((sample) => ({
       freqGHz: sample.freqGHz,
       matrix: sample.matrix.map((row) => row.map((value) => ({ re: value.re, im: value.im })))

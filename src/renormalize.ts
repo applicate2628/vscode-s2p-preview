@@ -5,20 +5,24 @@ const ONE: ComplexValue = { re: 1, im: 0 };
 
 export function effectiveReferenceOhms(
   sourceReferenceOhms: readonly number[],
-  targetOhms: number,
+  targetOhms: readonly number[],
   selectedPorts: readonly boolean[]
 ): number[] {
-  assertPositiveOhms(targetOhms, "Target impedance");
-
   return sourceReferenceOhms.map((sourceOhms, index) => {
     assertPositiveOhms(sourceOhms, `Source impedance for port ${index + 1}`);
-    return selectedPorts[index] ? targetOhms : sourceOhms;
+    if (!selectedPorts[index]) {
+      return sourceOhms;
+    }
+
+    const target = targetOhms[index];
+    assertPositiveOhms(target, `Target impedance for port ${index + 1}`);
+    return target;
   });
 }
 
 export function renormalizeDocument(
   doc: TouchstoneDocument,
-  targetOhms: number,
+  targetOhms: readonly number[],
   selectedPorts: readonly boolean[]
 ): TouchstoneDocument {
   const nextReferenceOhms = effectiveReferenceOhms(doc.referenceOhms, targetOhms, selectedPorts);

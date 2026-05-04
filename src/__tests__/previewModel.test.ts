@@ -23,11 +23,11 @@ test("keeps two-port preview metrics and default S11 S21 S22 curves", () => {
   assert.deepEqual(model.series.map((series) => series.label), ["S11", "S21", "S22"]);
   assert.equal(model.metricRows?.[0].s21db.toFixed(2), "-0.92");
   assert.equal(model.series[1].rows[0].db.toFixed(2), "-0.92");
-  assert.equal(model.impedance?.defaultTargetOhms, 50);
-  assert.deepEqual(model.impedance?.selectedPorts, [true, true]);
+  assert.deepEqual(model.impedance?.targetOhms, [50, 50]);
+  assert.deepEqual(model.impedance?.selectedPorts, [false, false]);
 });
 
-test("starts mixed-reference previews with only matching source ports selected", () => {
+test("starts mixed-reference previews with per-port targets and no enabled normalization", () => {
   const doc = parseTouchstone(
     [
       "[Version] 2.1",
@@ -43,8 +43,8 @@ test("starts mixed-reference previews with only matching source ports selected",
   const model = previewModel.buildPreviewModel(doc, "mixed.s2p");
 
   assert.deepEqual(model.impedance?.referenceOhms, [50, 75]);
-  assert.equal(model.impedance?.defaultTargetOhms, 50);
-  assert.deepEqual(model.impedance?.selectedPorts, [true, false]);
+  assert.deepEqual(model.impedance?.targetOhms, [50, 75]);
+  assert.deepEqual(model.impedance?.selectedPorts, [false, false]);
   assert.deepEqual(model.impedance?.samples[0].matrix[1][1], { re: 0.2, im: 0 });
 });
 
