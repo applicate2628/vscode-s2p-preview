@@ -18,9 +18,10 @@ Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF
 - Keeps `1-10 GHz` as the first configurable preset.
 - Adds and deletes view presets from the preview.
 - Renormalizes selected ports to editable per-port real `Z0, Ohm` values in single-file previews.
+- Exports the current chart area, including range indicator and legend, to PNG.
 - Shows guide lines at `-3 dB`, `-15 dB`, and `-20 dB`.
 
-Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, PNG export, and generic high-port `.sNp` visualization.
+Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, and generic high-port `.sNp` visualization.
 
 ## Use
 
@@ -40,6 +41,7 @@ Use the preset dropdown to activate a preset, save the current view as a new pre
 To return to the active preset after manual edits, open the dropdown and select that preset again.
 Use the `Sij` checkbox matrix to choose visible traces for multi-port files.
 Use `Normalize Z0, Ohm` and the port checkboxes to renormalize selected ports; the initial values come from the Touchstone option line or `[Reference]` block.
+Use `Export PNG...` to save the current chart area, including the passband range indicator, plotted traces, and visible legend.
 
 To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Editor`.
 

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import {
@@ -62,6 +63,7 @@ type WebviewMessage =
   }
   | { type: "deletePreset"; label: string }
   | { type: "setDefaultPreset"; label: string }
+  | { type: "exportPng"; fileName?: string; dataUrl?: string }
   | { type: "openOverlayPicker" }
   | { type: "renormalize"; targetOhms: number[]; selectedPorts: boolean[] };
 
@@ -321,6 +323,9 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
         case "setDefaultPreset":
           await setDefaultPresetFromWebview(panel, message.label);
           return;
+        case "exportPng":
+          await exportPngFromWebview(panel, message.fileName, message.dataUrl);
+          return;
         case "openOverlayPicker":
           await openOverlayPickerFromWebview(panel);
           return;
@@ -444,6 +449,72 @@ async function deletePresetFromWebview(panel: vscode.WebviewPanel, label: string
       ? settings.defaultPresetLabel
       : nextPresets[0].label;
   await updatePassbandSettings(panel, nextPresets, nextDefault, `Preset deleted: ${label}`);
+}
+
+async function exportPngFromWebview(
+  panel: vscode.WebviewPanel,
+  fileName: unknown,
+  dataUrl: unknown
+): Promise<void> {
+  const pngBytes = decodePngDataUrl(dataUrl);
+  if (!pngBytes) {
+    await panel.webview.postMessage({ type: "operationStatus", message: "Cannot export PNG: invalid image data." });
+    return;
+  }
+
+  const safeFileName = sanitizePngFileName(fileName);
+  const state = activePreviewDocuments.get(panel);
+  const defaultUri = state ? vscode.Uri.joinPath(dirnameUri(state.uri), safeFileName) : undefined;
+  const target = await vscode.window.showSaveDialog({
+    defaultUri,
+    filters: { "PNG Images": ["png"] },
+    saveLabel: "Export PNG"
+  });
+  if (!target) {
+    await panel.webview.postMessage({ type: "operationStatus", message: "PNG export cancelled." });
+    return;
+  }
+
+  await vscode.workspace.fs.writeFile(target, pngBytes);
+  await panel.webview.postMessage({
+    type: "operationStatus",
+    message: `PNG exported: ${vscode.workspace.asRelativePath(target, false)}`
+  });
+}
+
+function decodePngDataUrl(value: unknown): Uint8Array | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const prefix = "data:image/png;base64,";
+  if (!value.startsWith(prefix)) {
+    return undefined;
+  }
+
+  const base64 = value.slice(prefix.length);
+  if (!/^[0-9A-Za-z+/=]+$/.test(base64)) {
+    return undefined;
+  }
+
+  const bytes = Buffer.from(base64, "base64");
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < pngSignature.length || pngSignature.some((byte, index) => bytes[index] !== byte)) {
+    return undefined;
+  }
+
+  return bytes;
+}
+
+function sanitizePngFileName(value: unknown): string {
+  const source = typeof value === "string" && value.trim() ? value.trim() : "touchstone-preview.png";
+  const sanitized = source
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+  const withFallback = sanitized || "touchstone-preview.png";
+  return withFallback.toLowerCase().endsWith(".png") ? withFallback : `${withFallback}.png`;
 }
 
 async function setDefaultPresetFromWebview(panel: vscode.WebviewPanel, label: string): Promise<void> {
@@ -750,6 +821,7 @@ function renderControls(
           <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
         </div>
         ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
+        <button id="export-png-button" class="secondary-action" type="button">Export PNG...</button>
         ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
         <span id="passband-status" role="status" aria-live="polite"></span>
       </div>
@@ -1023,6 +1095,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
   const metricRowsJson = jsonForScript(metricRows);
   const impedanceJson = jsonForScript(model.impedance);
   const settingsJson = jsonForScript(settings);
+  const fileLabelJson = jsonForScript(model.fileLabel);
   const hasMetricRows = model.metricRows ? "true" : "false";
 
   return `
@@ -1031,6 +1104,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const METRICS_UNAVAILABLE = "2-port passband metrics are not available for this file.";
     const metricRows = ${metricRowsJson};
     const impedance = ${impedanceJson};
+    const exportSourceLabel = ${fileLabelJson};
     const hasMetricRows = ${hasMetricRows};
     let currentMetricRows = metricRows;
     let settings = ${settingsJson};
@@ -1055,6 +1129,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const presetMenuLabel = document.getElementById("preset-menu-label");
     const presetMenuRange = document.getElementById("preset-menu-range");
     const overlayPickerButton = document.getElementById("overlay-picker-button");
+    const exportPngButton = document.getElementById("export-png-button");
     const status = document.getElementById("passband-status");
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
@@ -1079,6 +1154,205 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function formatRange(startGHz, stopGHz) {
       return startGHz.toFixed(2) + "-" + stopGHz.toFixed(2) + " GHz";
+    }
+
+    async function exportCurrentChartPng() {
+      const target = document.querySelector(".chart-wrap");
+      if (!target) {
+        status.textContent = "Cannot export PNG: chart is not available.";
+        return;
+      }
+
+      status.textContent = "Preparing PNG export...";
+      try {
+        const exportSvg = buildExportSvg();
+        const image = await loadSvgImage(exportSvg.markup);
+        const scale = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = exportSvg.width * scale;
+        canvas.height = exportSvg.height * scale;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          throw new Error("Canvas rendering is not available.");
+        }
+
+        context.scale(scale, scale);
+        context.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
+        context.fillRect(0, 0, exportSvg.width, exportSvg.height);
+        context.drawImage(image, 0, 0, exportSvg.width, exportSvg.height);
+        vscode.postMessage({
+          type: "exportPng",
+          fileName: exportPngFileName(),
+          dataUrl: canvas.toDataURL("image/png")
+        });
+        status.textContent = "Choose where to save PNG...";
+      } catch (error) {
+        status.textContent = "Cannot export PNG: " + (error && error.message ? error.message : String(error));
+      }
+    }
+
+    function loadSvgImage(markup) {
+      return new Promise((resolve, reject) => {
+        const blob = new Blob([markup], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const image = new Image();
+        image.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(image);
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("SVG rendering failed."));
+        };
+        image.src = url;
+      });
+    }
+
+    function buildExportSvg() {
+      const chartSvg = document.querySelector(".chart-wrap svg");
+      if (!chartSvg) {
+        throw new Error("Chart SVG is not available.");
+      }
+
+      const viewBox = chartSvg.viewBox && chartSvg.viewBox.baseVal;
+      const chartWidth = viewBox && viewBox.width ? viewBox.width : 980;
+      const chartHeight = viewBox && viewBox.height ? viewBox.height : 520;
+      const topHeight = 30;
+      const legendRows = exportLegendRows();
+      const legend = buildLegendSvg(legendRows, topHeight + chartHeight + 18, chartWidth);
+      const totalHeight = topHeight + chartHeight + legend.height + 28;
+      const clone = chartSvg.cloneNode(true);
+      inlineSvgStyles(chartSvg, clone);
+
+      const background = getComputedStyle(document.body).backgroundColor || "#ffffff";
+      const passbandSwatch = document.querySelector(".chart-range-indicator .legend-passband");
+      const passbandLabel = document.getElementById("legend-passband-label");
+      const passbandColor = passbandSwatch ? getComputedStyle(passbandSwatch).backgroundColor : "rgba(79, 140, 255, 0.14)";
+      const textColor = passbandLabel ? getComputedStyle(passbandLabel).color : getComputedStyle(document.body).color;
+      const fontFamily = getComputedStyle(document.body).fontFamily || "Arial, sans-serif";
+      const rangeLabel = passbandLabel ? passbandLabel.textContent || "Passband" : "Passband";
+
+      const markup =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' + chartWidth + '" height="' + totalHeight + '" viewBox="0 0 ' + chartWidth + ' ' + totalHeight + '">' +
+        '<rect x="0" y="0" width="' + chartWidth + '" height="' + totalHeight + '" fill="' + escapeXml(background) + '"/>' +
+        '<rect x="64" y="8" width="32" height="14" rx="2" fill="' + escapeXml(passbandColor) + '"/>' +
+        '<text x="108" y="20" fill="' + escapeXml(textColor) + '" font-family="' + escapeXml(fontFamily) + '" font-size="12">' + escapeXml(rangeLabel) + '</text>' +
+        '<g transform="translate(0 ' + topHeight + ')">' + clone.innerHTML + '</g>' +
+        legend.markup +
+        '</svg>';
+
+      return { markup, width: chartWidth, height: totalHeight };
+    }
+
+    function inlineSvgStyles(source, target) {
+      copySvgStyle(source, target);
+      const sourceChildren = Array.from(source.children);
+      const targetChildren = Array.from(target.children);
+      for (let index = 0; index < sourceChildren.length; index += 1) {
+        if (targetChildren[index]) {
+          inlineSvgStyles(sourceChildren[index], targetChildren[index]);
+        }
+      }
+    }
+
+    function copySvgStyle(source, target) {
+      const computed = getComputedStyle(source);
+      const properties = [
+        "display", "fill", "font-family", "font-size", "font-weight", "opacity",
+        "stroke", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "stroke-width"
+      ];
+
+      for (const property of properties) {
+        const value = computed.getPropertyValue(property);
+        if (value) {
+          target.style.setProperty(property, value);
+        }
+      }
+    }
+
+    function exportLegendRows() {
+      const groupedRows = Array.from(document.querySelectorAll(".chart-legend.grouped .legend-file-row"));
+      if (groupedRows.length > 0) {
+        return groupedRows.map((row) => ({
+          label: (row.querySelector(".legend-file-label")?.textContent || "").trim(),
+          items: exportLegendItems(row)
+        })).filter((row) => row.items.length > 0);
+      }
+
+      const inlineLegend = document.querySelector(".chart-legend.inline");
+      if (!inlineLegend) {
+        return [];
+      }
+
+      return [{ label: "", items: exportLegendItems(inlineLegend) }];
+    }
+
+    function exportLegendItems(container) {
+      return Array.from(container.querySelectorAll(".legend-item"))
+        .filter((item) => getComputedStyle(item).display !== "none")
+        .map((item) => {
+          const line = item.querySelector(".legend-line");
+          return {
+            label: (item.textContent || "").trim(),
+            color: line ? getComputedStyle(line).backgroundColor : getComputedStyle(document.body).color
+          };
+        })
+        .filter((item) => item.label);
+    }
+
+    function buildLegendSvg(rows, startY, width) {
+      const fontFamily = getComputedStyle(document.body).fontFamily || "Arial, sans-serif";
+      const textColor = getComputedStyle(document.body).color || "#000000";
+      const rowHeight = 22;
+      const left = 64;
+      const labelWidth = rows.some((row) => row.label) ? 138 : 0;
+      let y = startY;
+      const parts = [];
+
+      for (const row of rows) {
+        let x = left;
+        const rowStartY = y;
+        if (row.label) {
+          parts.push('<text x="' + x + '" y="' + y + '" fill="' + escapeXml(textColor) + '" font-family="' + escapeXml(fontFamily) + '" font-size="12" font-weight="600">' + escapeXml(row.label) + '</text>');
+          x += labelWidth;
+        }
+
+        for (const item of row.items) {
+          const itemWidth = Math.max(78, item.label.length * 7 + 50);
+          if (x + itemWidth > width - 24) {
+            y += rowHeight;
+            x = left + labelWidth;
+          }
+          parts.push('<line x1="' + x + '" y1="' + (y - 4) + '" x2="' + (x + 32) + '" y2="' + (y - 4) + '" stroke="' + escapeXml(item.color) + '" stroke-width="3" stroke-linecap="round"/>');
+          parts.push('<text x="' + (x + 42) + '" y="' + y + '" fill="' + escapeXml(textColor) + '" font-family="' + escapeXml(fontFamily) + '" font-size="12">' + escapeXml(item.label) + '</text>');
+          x += itemWidth;
+        }
+
+        y = Math.max(y, rowStartY) + rowHeight;
+      }
+
+      return { markup: parts.join(""), height: rows.length > 0 ? y - startY : 0 };
+    }
+
+    function escapeXml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function exportPngFileName() {
+      const range = formatRange(Number(startInput.value), Number(stopInput.value));
+      const base = String(exportSourceLabel || "touchstone-preview")
+        .replace(/[\\\\/:*?"<>|]+/g, "_")
+        .replace(/\\s+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 72) || "touchstone-preview";
+      const suffix = range
+        .replace(/[^0-9A-Za-z.\\-]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return base + "-" + suffix + ".png";
     }
 
     function setText(id, value) {
@@ -1552,6 +1826,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         vscode.postMessage({ type: "openOverlayPicker" });
       });
     }
+    if (exportPngButton) {
+      exportPngButton.addEventListener("click", exportCurrentChartPng);
+    }
     document.addEventListener("click", () => setPresetMenuOpen(false));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
@@ -1676,7 +1953,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
   <style>
     :root {
       --surface: var(--vscode-sideBar-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
@@ -1691,9 +1968,9 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     }
     * { box-sizing: border-box; }
     body {
-      color: var(--vscode-foreground);
-      background: var(--vscode-editor-background);
-      font-family: var(--vscode-font-family);
+      color: var(--vscode-foreground, #1f2328);
+      background: var(--vscode-editor-background, #ffffff);
+      font-family: var(--vscode-font-family, "Segoe UI", sans-serif);
       margin: 0;
       padding: 18px;
     }
@@ -1767,8 +2044,8 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     }
     .controls input,
     .port-target-input {
-      color: var(--vscode-input-foreground);
-      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground, var(--vscode-foreground, #1f2328));
+      background: var(--vscode-input-background, #ffffff);
       border: 1px solid var(--vscode-input-border, var(--border));
       border-radius: 4px;
       padding: 6px 8px;
@@ -1951,12 +2228,12 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       font-size: 12px;
     }
     svg { display: block; width: 100%; min-width: 760px; height: auto; }
-    .chart-bg { fill: var(--vscode-editor-background); }
+    .chart-bg { fill: var(--vscode-editor-background, #ffffff); }
     .passband { fill: var(--accent); opacity: 0.14; }
     .grid { stroke: var(--vscode-editorIndentGuide-background, var(--border)); stroke-width: 1; opacity: 0.75; }
-    .axis { fill: none; stroke: var(--vscode-foreground); stroke-width: 1.2; opacity: 0.82; }
-    .guide { stroke: var(--vscode-descriptionForeground); stroke-width: 1; stroke-dasharray: 5 5; }
-    .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
+    .axis { fill: none; stroke: var(--vscode-foreground, #1f2328); stroke-width: 1.2; opacity: 0.82; }
+    .guide { stroke: var(--vscode-descriptionForeground, #6a737d); stroke-width: 1; stroke-dasharray: 5 5; }
+    .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground, #6a737d); font-size: 12px; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
       height: var(--legend-height, 76px);
