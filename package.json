@@ -5,6 +5,10 @@
   "version": "0.0.2",
   "publisher": "applicate2628",
   "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/applicate2628/vscode-s2p-preview.git"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"

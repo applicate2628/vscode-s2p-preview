@@ -18,16 +18,15 @@ Unsupported for MVP: Touchstone 2.0/2.1 keyword blocks, Smith chart, multi-file 
 ## Build
 
 ```powershell
-cd tools\vscode-s2p-preview
 npm install
-npm run compile
+npm test
 npm run package
 ```
 
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.1.vsix
+code --install-extension .\vscode-s2p-preview-0.0.2.vsix
 ```
 
 ## Use

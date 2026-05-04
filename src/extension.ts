@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import {
   AUTO_PASSBAND_LABEL,
@@ -35,7 +36,8 @@ export function activate(context: vscode.ExtensionContext): void {
         title,
         vscode.ViewColumn.Beside,
         {
-          enableScripts: true
+          enableScripts: true,
+          localResourceRoots: []
         }
       );
 
@@ -74,7 +76,8 @@ class S2pPreviewEditorProvider implements vscode.CustomReadonlyEditorProvider<S2
 
   public async resolveCustomEditor(document: S2pDocument, webviewPanel: vscode.WebviewPanel): Promise<void> {
     webviewPanel.webview.options = {
-      enableScripts: true
+      enableScripts: true,
+      localResourceRoots: []
     };
 
     attachWebviewMessageHandler(webviewPanel);
@@ -860,10 +863,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getNonce(): string {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let nonce = "";
-  for (let i = 0; i < 32; i += 1) {
-    nonce += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-  }
-  return nonce;
+  return randomBytes(32).toString("base64url");
 }
