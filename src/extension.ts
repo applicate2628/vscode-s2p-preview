@@ -681,24 +681,26 @@ function renderControls(
 ): string {
   return `
     <section class="controls" aria-label="Passband controls">
-      <label class="control-field">
-        Start GHz
-        <input id="passband-start" type="number" value="${defaultPreset.startGHz}" step="0.01" />
-      </label>
-      <label class="control-field">
-        Stop GHz
-        <input id="passband-stop" type="number" value="${defaultPreset.stopGHz}" step="0.01" />
-      </label>
-      <div class="preset-dropdown">
-        <button id="preset-menu-button" class="split-button preset-menu-button" type="button" aria-haspopup="listbox" aria-expanded="false">
-          <span id="preset-menu-label">${escapeHtml(defaultPreset.label)}</span>
-          <small id="preset-menu-range">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</small>
-        </button>
-        <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
+      <div class="range-controls">
+        <label class="control-field">
+          Start GHz
+          <input id="passband-start" type="number" value="${defaultPreset.startGHz}" step="0.01" />
+        </label>
+        <label class="control-field">
+          Stop GHz
+          <input id="passband-stop" type="number" value="${defaultPreset.stopGHz}" step="0.01" />
+        </label>
+        <div class="preset-dropdown">
+          <button id="preset-menu-button" class="split-button preset-menu-button" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span id="preset-menu-label">${escapeHtml(defaultPreset.label)}</span>
+            <small id="preset-menu-range">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</small>
+          </button>
+          <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
+        </div>
+        ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
+        <span id="passband-status" role="status" aria-live="polite"></span>
       </div>
-      ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
       ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
-      <span id="passband-status" role="status" aria-live="polite"></span>
     </section>
   `;
 }
@@ -783,7 +785,9 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
   const guides = [-3, -15, -20];
-  const legendItems = series.map((item, index) => {
+  const hasOverlaySeries = series.some((item) => item.cssClass.includes("overlay-line"));
+  const showSeriesLegend = hasOverlaySeries || series.length <= 4;
+  const legendItems = showSeriesLegend ? series.map((item, index) => {
     const visibilityClass = item.defaultVisible ? "" : " series-hidden";
     const key = traceKey(item.selector);
     return `
@@ -792,7 +796,8 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         <span>${escapeHtml(item.label)}</span>
       </div>
     `;
-  }).join("");
+  }).join("") : "";
+  const legendModeClass = hasOverlaySeries ? "stacked" : "inline";
 
   return `
     <section class="chart-wrap">
@@ -812,7 +817,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         <text class="axis-label" x="${chart.margin.left + chart.plotWidth / 2}" y="${chart.height - 8}" text-anchor="middle">Frequency, GHz</text>
         <text class="axis-label" x="18" y="${chart.margin.top + chart.plotHeight / 2}" text-anchor="middle" transform="rotate(-90 18 ${chart.margin.top + chart.plotHeight / 2})">dB</text>
       </svg>
-      <div class="chart-legend" aria-label="Plot legend">
+      <div class="chart-legend ${legendModeClass}" aria-label="Plot legend">
         ${legendItems}
         <div class="legend-item passband-legend-item">
           <span class="legend-passband"></span>
@@ -1609,10 +1614,9 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       white-space: nowrap;
     }
     .controls {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
       gap: 10px;
-      align-items: end;
+      align-items: start;
       width: max-content;
       max-width: 100%;
       margin: 0 0 12px;
@@ -1620,6 +1624,13 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
+    }
+    .range-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+      min-width: 0;
     }
     .control-field {
       display: grid;
@@ -1636,8 +1647,8 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       padding: 6px 8px;
       font: inherit;
     }
-    .controls input { width: 112px; }
-    .controls > button,
+    .control-field input { width: 112px; }
+    .range-controls > button,
     .split-button {
       min-height: 48px;
       color: var(--vscode-button-foreground);
@@ -1648,7 +1659,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       font: inherit;
       cursor: pointer;
     }
-    .controls > button:hover,
+    .range-controls > button:hover,
     .split-button:hover { background: var(--vscode-button-hoverBackground); }
     .secondary-action {
       color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
@@ -1802,13 +1813,21 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
+      margin: 10px 0 0 64px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .chart-legend.inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 28px;
+      align-items: center;
+    }
+    .chart-legend.stacked {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       gap: 6px;
       align-items: center;
-      margin: 10px 0 0 64px;
-      color: var(--muted);
-      font-size: 12px;
     }
     .legend-item {
       display: inline-flex;
