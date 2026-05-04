@@ -69,6 +69,28 @@ type SupportedTouchstoneOptions = TouchstoneOptions & {
   format: TouchstoneFormat;
 };
 
+type TwoPortDataOrder = "21_12";
+
+interface KeywordLine {
+  original: string;
+  keyword: string;
+  argument: string;
+}
+
+interface TouchstoneParseState {
+  version: TouchstoneVersion;
+  ports: number;
+  options?: TouchstoneOptions;
+  samples: TouchstoneSample[];
+  pendingValues: number[];
+  numberOfFrequencies?: number;
+  referenceValues?: number[];
+  twoPortDataOrder?: TwoPortDataOrder;
+  inNetworkData: boolean;
+  sawNetworkData: boolean;
+  endedNetworkData: boolean;
+}
+
 const FREQ_SCALE_TO_GHZ: Record<string, number> = {
   HZ: 1e-9,
   KHZ: 1e-6,
@@ -79,62 +101,78 @@ const FREQ_SCALE_TO_GHZ: Record<string, number> = {
 const SUPPORTED_FORMATS: TouchstoneFormat[] = ["MA", "DB", "RI"];
 
 export function parseTouchstone(text: string, sourceName = "untitled.s2p"): TouchstoneDocument {
-  const ports = inferPortCount(sourceName);
-  const expectedValueCount = 1 + ports * ports * 2;
+  const state: TouchstoneParseState = {
+    version: "1.x",
+    ports: inferPortCount(sourceName),
+    samples: [],
+    pendingValues: [],
+    inNetworkData: false,
+    sawNetworkData: false,
+    endedNetworkData: false
+  };
   const lines = text.split(/\r?\n/);
-  let options: TouchstoneOptions | undefined;
-  const samples: TouchstoneSample[] = [];
-  let pendingValues: number[] = [];
 
   for (const rawLine of lines) {
     const withoutComment = rawLine.split("!")[0].trim();
     if (!withoutComment) {
       continue;
     }
+
+    const keywordLine = parseKeywordLine(withoutComment);
+    if (keywordLine) {
+      assertNoPendingValues(state);
+      applyKeywordLine(state, keywordLine);
+      continue;
+    }
+
     if (withoutComment.startsWith("[")) {
       throw unsupportedKeywordError(withoutComment);
     }
+
     if (withoutComment.startsWith("#")) {
-      if (pendingValues.length > 0) {
-        throw incompleteNetworkDataError(ports, expectedValueCount, pendingValues.length);
-      }
-      options = parseOptions(withoutComment);
-      assertSupportedOptions(options);
+      assertCanApplyOptionLine(state);
+      assertNoPendingValues(state);
+      state.options = parseOptions(withoutComment);
+      assertSupportedOptions(state.options);
       continue;
     }
-    if (!options) {
+
+    if (!state.options) {
       throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
     }
 
-    assertSupportedOptions(options);
-
-    pendingValues = pendingValues.concat(parseNumericRow(withoutComment));
-
-    while (pendingValues.length >= expectedValueCount) {
-      const sampleValues = pendingValues.slice(0, expectedValueCount);
-      pendingValues = pendingValues.slice(expectedValueCount);
-      samples.push(valuesToSample(sampleValues, ports, options));
+    if (state.version !== "1.x" && !state.inNetworkData) {
+      if (state.endedNetworkData) {
+        throw new Error("Touchstone numeric network data found after [End]. Start a new [Network Data] block before more data.");
+      }
+      throw new Error("Touchstone 2.x network data must appear after [Network Data].");
     }
+
+    appendNetworkValues(state, parseNumericRow(withoutComment));
   }
 
-  if (!options) {
+  if (!state.options) {
     throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
   }
-  assertSupportedOptions(options);
-  if (pendingValues.length > 0) {
-    throw incompleteNetworkDataError(ports, expectedValueCount, pendingValues.length);
-  }
-  if (samples.length === 0) {
+  assertSupportedOptions(state.options);
+  assertNoPendingValues(state);
+  if (state.samples.length === 0) {
     throw new Error("No Touchstone data rows found.");
+  }
+  if (state.numberOfFrequencies !== undefined && state.numberOfFrequencies !== state.samples.length) {
+    throw new Error(`[Number of Frequencies] expected ${state.numberOfFrequencies} samples, parsed ${state.samples.length}.`);
+  }
+  if (state.twoPortDataOrder && state.ports !== 2) {
+    throw new Error("[Two-Port Data Order] is valid only for 2-port Touchstone files.");
   }
 
   return {
-    version: "1.x",
-    ports,
-    parameter: options.parameter,
-    format: options.format,
-    referenceOhms: Array.from({ length: ports }, () => options.referenceOhms),
-    samples,
+    version: state.version,
+    ports: state.ports,
+    parameter: state.options.parameter,
+    format: state.options.format,
+    referenceOhms: referenceOhmsForState(state, state.options),
+    samples: state.samples,
     sourceName
   };
 }
@@ -208,6 +246,180 @@ function parseNumericRow(line: string): number[] {
   return values;
 }
 
+function parseKeywordLine(line: string): KeywordLine | undefined {
+  const match = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    original: line,
+    keyword: match[1].trim().toLowerCase().replace(/\s+/g, " "),
+    argument: match[2].trim()
+  };
+}
+
+function applyKeywordLine(state: TouchstoneParseState, line: KeywordLine): void {
+  if (line.keyword === "version") {
+    applyVersionKeyword(state, line);
+    return;
+  }
+
+  if (state.version === "1.x") {
+    throw unsupportedKeywordError(line.original);
+  }
+
+  switch (line.keyword) {
+    case "number of ports":
+      assertNoNetworkDataStarted(state, line.original);
+      state.ports = parsePositiveIntegerKeyword(line);
+      validateReferenceValueCount(state);
+      return;
+    case "number of frequencies":
+      assertNoNetworkDataStarted(state, line.original);
+      state.numberOfFrequencies = parsePositiveIntegerKeyword(line);
+      return;
+    case "reference":
+      assertNoNetworkDataStarted(state, line.original);
+      state.referenceValues = parseNumberList(line);
+      validateReferenceValueCount(state);
+      return;
+    case "two-port data order":
+      assertNoNetworkDataStarted(state, line.original);
+      if (line.argument.trim().toUpperCase() !== "21_12") {
+        throw new Error(`Unsupported Touchstone keyword '${line.original}'. Supported: 21_12.`);
+      }
+      state.twoPortDataOrder = "21_12";
+      return;
+    case "matrix format":
+      assertNoNetworkDataStarted(state, line.original);
+      if (!line.argument || line.argument.toUpperCase() === "FULL") {
+        return;
+      }
+      throw new Error(`Unsupported Touchstone keyword '${line.original}'. Supported: Full.`);
+    case "network data":
+      if (!state.options) {
+        throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
+      }
+      assertSupportedOptions(state.options);
+      if (state.sawNetworkData) {
+        throw new Error("Multiple [Network Data] blocks are not supported.");
+      }
+      state.inNetworkData = true;
+      state.sawNetworkData = true;
+      state.endedNetworkData = false;
+      return;
+    case "end":
+      if (!state.inNetworkData) {
+        throw new Error("Unexpected [End] before [Network Data].");
+      }
+      state.inNetworkData = false;
+      state.endedNetworkData = true;
+      return;
+    default:
+      throw unsupportedKeywordError(line.original);
+  }
+}
+
+function applyVersionKeyword(state: TouchstoneParseState, line: KeywordLine): void {
+  if (state.sawNetworkData || state.samples.length > 0) {
+    throw new Error("[Version] must appear before Touchstone network data.");
+  }
+
+  switch (line.argument) {
+    case "2.0":
+    case "2.1":
+      state.version = line.argument;
+      return;
+    default:
+      throw new Error(`Unsupported Touchstone [Version] '${line.argument}'. Supported: 2.0, 2.1.`);
+  }
+}
+
+function appendNetworkValues(state: TouchstoneParseState, values: number[]): void {
+  if (!state.options) {
+    throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
+  }
+  assertSupportedOptions(state.options);
+
+  state.pendingValues = state.pendingValues.concat(values);
+  const expectedValueCount = expectedNetworkValueCount(state.ports);
+
+  while (state.pendingValues.length >= expectedValueCount) {
+    const sampleValues = state.pendingValues.slice(0, expectedValueCount);
+    state.pendingValues = state.pendingValues.slice(expectedValueCount);
+    state.samples.push(valuesToSample(sampleValues, state.ports, state.options));
+  }
+}
+
+function assertCanApplyOptionLine(state: TouchstoneParseState): void {
+  if (state.version !== "1.x" && state.sawNetworkData) {
+    throw new Error("Touchstone option line must appear before [Network Data].");
+  }
+  if (state.samples.length > 0) {
+    throw new Error("Touchstone option line cannot appear after network data.");
+  }
+}
+
+function assertNoPendingValues(state: TouchstoneParseState): void {
+  if (state.pendingValues.length > 0) {
+    throw incompleteNetworkDataError(state.ports, expectedNetworkValueCount(state.ports), state.pendingValues.length);
+  }
+}
+
+function assertNoNetworkDataStarted(state: TouchstoneParseState, keyword: string): void {
+  if (state.sawNetworkData || state.samples.length > 0) {
+    throw new Error(`Touchstone keyword '${keyword}' must appear before [Network Data].`);
+  }
+}
+
+function parsePositiveIntegerKeyword(line: KeywordLine): number {
+  const value = Number(line.argument);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`Malformed Touchstone keyword '${line.original}'. Expected a positive integer.`);
+  }
+
+  return value;
+}
+
+function parseNumberList(line: KeywordLine): number[] {
+  if (!line.argument) {
+    throw new Error(`Malformed Touchstone keyword '${line.original}'. Expected numeric values.`);
+  }
+
+  const values = line.argument.split(/\s+/).map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    throw new Error(`Malformed Touchstone keyword '${line.original}'. Expected numeric values.`);
+  }
+
+  return values;
+}
+
+function validateReferenceValueCount(state: TouchstoneParseState): void {
+  if (!state.referenceValues) {
+    return;
+  }
+  if (state.referenceValues.length !== 1 && state.referenceValues.length !== state.ports) {
+    throw new Error(`[Reference] expects one value or ${state.ports} values, found ${state.referenceValues.length}.`);
+  }
+}
+
+function referenceOhmsForState(state: TouchstoneParseState, options: SupportedTouchstoneOptions): number[] {
+  const values = state.referenceValues ?? [options.referenceOhms];
+  if (values.length === 1) {
+    return Array.from({ length: state.ports }, () => values[0]);
+  }
+  if (values.length === state.ports) {
+    return values.slice();
+  }
+
+  throw new Error(`[Reference] expects one value or ${state.ports} values, found ${values.length}.`);
+}
+
+function expectedNetworkValueCount(ports: number): number {
+  return 1 + ports * ports * 2;
+}
+
 function valuesToSample(values: number[], ports: number, options: SupportedTouchstoneOptions): TouchstoneSample {
   const freqGHz = values[0] * FREQ_SCALE_TO_GHZ[options.freqUnit];
   const pairs: ComplexValue[] = [];
@@ -227,7 +439,7 @@ function incompleteNetworkDataError(ports: number, expectedValueCount: number, f
 
 function unsupportedKeywordError(line: string): Error {
   const keyword = line.match(/^\[[^\]]+\]/)?.[0] ?? line.split(/\s+/)[0];
-  return new Error(`Unsupported Touchstone keyword '${keyword}'. Touchstone 2.x keyword parsing is added in the next task.`);
+  return new Error(`Unsupported Touchstone keyword '${keyword}'.`);
 }
 
 function validateTraceSelector(doc: TouchstoneDocument, selector: TraceSelector): void {
@@ -311,7 +523,8 @@ function parseOptions(line: string): TouchstoneOptions {
 }
 
 function magnitudeToDb(magnitude: number): number {
-  return 20 * Math.log10(Math.max(magnitude, 1e-300));
+  const db = 20 * Math.log10(Math.max(magnitude, 1e-300));
+  return Math.round(db * 1e12) / 1e12;
 }
 
 function pairToComplex(v1: number, v2: number, format: TouchstoneFormat): ComplexValue {

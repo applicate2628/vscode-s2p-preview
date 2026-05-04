@@ -67,6 +67,94 @@ test("accumulates Touchstone 1.x 3-port RI data split across matrix rows", () =>
   ]);
 });
 
+test("parses Touchstone 2.1 keyword-block s2p files", () => {
+  const doc = parseTouchstone(
+    [
+      "[Version] 2.1",
+      "# GHZ S DB R 50",
+      "[Number of Ports] 2",
+      "[Two-Port Data Order] 21_12",
+      "[Number of Frequencies] 1",
+      "[Reference] 50 75",
+      "[Network Data]",
+      "1 -6 0 -1 0 -40 0 -8 0",
+      "[End]"
+    ].join("\n"),
+    "network.s2p"
+  );
+
+  assert.equal(doc.version, "2.1");
+  assert.equal(doc.ports, 2);
+  assert.deepEqual(doc.referenceOhms, [50, 75]);
+  assert.equal(traceDbRows(doc, { toPort: 2, fromPort: 1 })[0].db, -1);
+});
+
+test("parses Touchstone 2.0 full matrix s3p files", () => {
+  const doc = parseTouchstone(
+    [
+      "[Version] 2.0",
+      "# GHZ S RI R 50",
+      "[Number of Ports] 3",
+      "[Number of Frequencies] 1",
+      "[Network Data]",
+      "1",
+      "0.1 0 0.2 0 0.3 0",
+      "0.4 0 0.5 0 0.6 0",
+      "0.7 0 0.8 0 0.9 0",
+      "[End]"
+    ].join("\n"),
+    "network.s3p"
+  );
+
+  assert.equal(doc.version, "2.0");
+  assert.equal(doc.ports, 3);
+  assert.deepEqual(doc.samples[0].matrix[2][1], { re: 0.8, im: 0 });
+});
+
+test("rejects unsupported non-S Touchstone parameters", () => {
+  assert.throws(
+    () => parseTouchstone("# GHZ Z RI R 50\n1 50 0 0 0 0 0 50 0", "impedance.s2p"),
+    /supports only S-parameters/
+  );
+});
+
+test("rejects unsupported Touchstone matrix formats clearly", () => {
+  assert.throws(
+    () => parseTouchstone(
+      [
+        "[Version] 2.1",
+        "# GHZ S MA R 50",
+        "[Number of Ports] 3",
+        "[Matrix Format] Upper",
+        "[Number of Frequencies] 1",
+        "[Network Data]",
+        "1 0.1 0 0.2 0 0.3 0",
+        "[End]"
+      ].join("\n"),
+      "upper.s3p"
+    ),
+    /Unsupported Touchstone keyword '\[Matrix Format\] Upper'/
+  );
+});
+
+test("rejects Touchstone 2.x option lines after network data", () => {
+  assert.throws(
+    () => parseTouchstone(
+      [
+        "[Version] 2.1",
+        "# GHZ S DB R 50",
+        "[Number of Ports] 2",
+        "[Network Data]",
+        "1 -6 0 -1 0 -40 0 -8 0",
+        "[End]",
+        "# GHZ S RI R 75"
+      ].join("\n"),
+      "late-option.s2p"
+    ),
+    /option line.*before \[Network Data\]|after \[Network Data\]/i
+  );
+});
+
 test("throws a clear error for incomplete multi-line network data", () => {
   assert.throws(
     () => parseTouchstone("# GHZ S RI R 50\n1\n0.1 0", "broken.s3p"),
