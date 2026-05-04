@@ -7,7 +7,8 @@ import {
   normalizeDefaultPassbandLabel,
   sanitizePresetRenormalize,
   sanitizePresetTraces,
-  upsertPassbandPreset
+  upsertPassbandPreset,
+  userScopedConfigurationValue
 } from "../passband";
 
 test("default preset list starts with 1-10 GHz", () => {
@@ -107,4 +108,24 @@ test("upserts passband presets by label", () => {
   const added = upsertPassbandPreset(existing, { label: "5-6 GHz", startGHz: 5, stopGHz: 6 });
   assert.equal(added.updated, false);
   assert.deepEqual(added.presets.map((preset) => preset.label), ["1-10 GHz", "2-4 GHz", "5-6 GHz"]);
+});
+
+test("uses user-scoped preset settings instead of workspace overrides", () => {
+  assert.deepEqual(
+    userScopedConfigurationValue({
+      defaultValue: [{ label: "1-10 GHz", startGHz: 1, stopGHz: 10 }],
+      globalValue: [{ label: "2-4 GHz", startGHz: 2, stopGHz: 4 }],
+      workspaceValue: [{ label: "File local", startGHz: 3, stopGHz: 5 }],
+      workspaceFolderValue: [{ label: "Folder local", startGHz: 6, stopGHz: 8 }]
+    }),
+    [{ label: "2-4 GHz", startGHz: 2, stopGHz: 4 }]
+  );
+
+  assert.deepEqual(
+    userScopedConfigurationValue({
+      defaultValue: [{ label: "1-10 GHz", startGHz: 1, stopGHz: 10 }],
+      workspaceValue: [{ label: "File local", startGHz: 3, stopGHz: 5 }]
+    }),
+    [{ label: "1-10 GHz", startGHz: 1, stopGHz: 10 }]
+  );
 });

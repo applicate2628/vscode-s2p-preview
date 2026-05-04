@@ -16,6 +16,13 @@ export interface PassbandPresetRenormalize {
   targetOhms: number[];
 }
 
+export interface ConfigurationInspectionLike<T> {
+  defaultValue?: T;
+  globalValue?: T;
+  workspaceValue?: T;
+  workspaceFolderValue?: T;
+}
+
 export const AUTO_PASSBAND_LABEL = "Auto / Full file range";
 
 export const DEFAULT_PASSBAND_PRESETS: PassbandPreset[] = [
@@ -47,6 +54,12 @@ export function upsertPassbandPreset(
     presets: presets.map((item, index) => (index === existingIndex ? preset : item)),
     updated: true
   };
+}
+
+export function userScopedConfigurationValue<T>(
+  inspection: ConfigurationInspectionLike<T> | undefined
+): T | undefined {
+  return inspection?.globalValue ?? inspection?.defaultValue;
 }
 
 export function createAutoPassband(rows: readonly { freqGHz: number }[]): PassbandPreset {

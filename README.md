@@ -70,6 +70,7 @@ To compare selected files, multi-select Touchstone files in Explorer, right-clic
 From an open preview, use `Overlay files...` to pick Touchstone files from the same folder and open an overlay preview.
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
 Use the preset dropdown to activate a preset, save the current view as a new preset, or delete a preset with the `x` at the end of its row.
+Saved presets are user-level settings, so ranges, visible traces, and Z0 normalization apply across files and workspaces.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
 Use the `Sij` checkbox matrix to choose visible traces for multi-port files.
 Use `Normalize Z0, Ohm` and the port checkboxes to renormalize selected ports; the initial values come from the Touchstone option line or `[Reference]` block.

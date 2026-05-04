@@ -8,7 +8,8 @@ import {
   normalizeDefaultPassbandLabel,
   sanitizePresetRenormalize,
   sanitizePresetTraces,
-  upsertPassbandPreset
+  upsertPassbandPreset,
+  userScopedConfigurationValue
 } from "./passband";
 import type { PassbandPreset, PassbandPresetRenormalize, PassbandPresetTrace } from "./passband";
 import { formatEffectiveReferenceOhms, formatFileReferenceOhms } from "./impedanceDisplay";
@@ -567,20 +568,7 @@ async function renormalizeFromWebview(
 }
 
 async function updateConfigurationValue<T>(key: string, value: T): Promise<void> {
-  await vscode.workspace.getConfiguration("s2pPreview").update(key, value, passbandConfigurationTarget());
-}
-
-function passbandConfigurationTarget(): vscode.ConfigurationTarget {
-  const config = vscode.workspace.getConfiguration("s2pPreview");
-  const presets = config.inspect("passbandPresets");
-  const defaultPreset = config.inspect("defaultPassbandPreset");
-  const hasWorkspaceOverride =
-    presets?.workspaceValue !== undefined ||
-    presets?.workspaceFolderValue !== undefined ||
-    defaultPreset?.workspaceValue !== undefined ||
-    defaultPreset?.workspaceFolderValue !== undefined;
-
-  return hasWorkspaceOverride ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+  await vscode.workspace.getConfiguration("s2pPreview").update(key, value, vscode.ConfigurationTarget.Global);
 }
 
 async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel): Promise<void> {
@@ -1859,9 +1847,11 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
 function getPassbandSettings(): PassbandSettings {
   const config = vscode.workspace.getConfiguration("s2pPreview");
-  const configuredPresets = config.get<unknown>("passbandPresets");
+  const inspectedPresets = config.inspect<unknown>("passbandPresets");
+  const configuredPresets = userScopedConfigurationValue(inspectedPresets);
   const presets = sanitizePresets(configuredPresets);
-  const configuredDefault = config.get<string>("defaultPassbandPreset");
+  const inspectedDefault = config.inspect<string>("defaultPassbandPreset");
+  const configuredDefault = userScopedConfigurationValue(inspectedDefault);
 
   return {
     presets,
