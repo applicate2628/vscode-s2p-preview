@@ -23,9 +23,11 @@ npm test
 npm run package
 ```
 
-## Release / Push Rule
+## Local Commits And Release
 
-Every push to GitHub must include a version bump. Use the release script instead of running `git push` directly for normal publication:
+Commit normal development changes locally without bumping the extension version. Do not push every local change.
+
+When the current local commit batch is ready to publish, push through the release script. Every push to GitHub must include a version bump:
 
 ```powershell
 npm run release:patch
@@ -37,7 +39,7 @@ For Bash environments, use the equivalent script:
 npm run release:patch:bash
 ```
 
-Both scripts bump the package patch version, update the local VSIX filename in this README, run tests, package the extension, run `npm audit`, commit the version bump, and push the current branch to the configured `origin`. They do not hardcode the GitHub owner; forks push to their own `origin`.
+Both scripts bump the package patch version once for the batch, update the local VSIX filename in this README, run tests, package the extension, run `npm audit`, commit the version bump, and push the current branch to the configured `origin`. They do not hardcode the GitHub owner; forks push to their own `origin`.
 
 ## Install Local VSIX
 
