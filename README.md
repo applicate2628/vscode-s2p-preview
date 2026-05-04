@@ -66,6 +66,7 @@ S2P: Preview Current File
 
 You can also right-click a `.s1p`, `.s2p`, `.s3p`, or `.s4p` file in Explorer and run the same command.
 To compare selected files, multi-select Touchstone files in Explorer, right-click, and run `S2P: Preview Selected Files Overlay`.
+From an open preview, use `Overlay files...` to pick Touchstone files from the same folder and open an overlay preview.
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
 Use the preset dropdown to activate a preset, save the current view as a new preset, or delete a preset with the `x` at the end of its row.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
@@ -116,6 +117,7 @@ See `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyright and commercia
 - `mixed-mode`: a network-parameter representation that separates common-mode and differential-mode behavior.
 - `PNG`: Portable Network Graphics image format.
 - `PowerShell`: Microsoft's command shell used by the default release script on Windows.
+- `overlay`: a preview mode that plots one selected S-parameter trace from multiple files on one chart.
 - `S2P`: Touchstone two-port `S`-parameter file format.
 - `S-parameter`: scattering parameter used to describe RF network behavior.
 - `Sij`: one S-parameter trace where `i` is the destination/output port and `j` is the source/input port.

@@ -40,6 +40,7 @@
   "activationEvents": [
     "onCommand:s2pPreview.open",
     "onCommand:s2pPreview.openOverlay",
+    "onCommand:s2pPreview.openOverlayPicker",
     "onCustomEditor:s2pPreview.editor"
   ],
   "main": "./out/extension.js",
@@ -166,15 +167,35 @@
       },
       {
         "command": "s2pPreview.openOverlay",
-        "title": "S2P: Preview Selected Files Overlay"
+        "title": "S2P: Preview Selected Files Overlay",
+        "category": "S2P Preview",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "s2pPreview.openOverlayPicker",
+        "title": "S2P: Select Files For Overlay...",
+        "category": "S2P Preview",
+        "icon": "$(list-selection)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "s2pPreview.openOverlayPicker",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
+          "group": "navigation@2"
+        }
+      ],
       "editor/title/context": [
         {
           "command": "s2pPreview.open",
           "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
           "group": "navigation"
+        },
+        {
+          "command": "s2pPreview.openOverlayPicker",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
+          "group": "navigation@2"
         }
       ],
       "explorer/context": [
@@ -187,6 +208,11 @@
           "command": "s2pPreview.openOverlay",
           "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
           "group": "navigation@2"
+        },
+        {
+          "command": "s2pPreview.openOverlayPicker",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
+          "group": "navigation@3"
         }
       ]
     }

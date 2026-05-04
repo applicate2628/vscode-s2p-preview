@@ -38,6 +38,7 @@ interface PassbandSettings {
 interface PreviewDocumentState {
   doc: TouchstoneDocument;
   fileLabel: string;
+  uri: vscode.Uri;
 }
 
 type WebviewMessage =
@@ -50,6 +51,7 @@ type WebviewMessage =
   }
   | { type: "deletePreset"; label: string }
   | { type: "setDefaultPreset"; label: string }
+  | { type: "openOverlayPicker" }
   | { type: "renormalize"; targetOhms: number[]; selectedPorts: boolean[] };
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -77,6 +79,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("s2pPreview.openOverlay", async (uri?: vscode.Uri, selectedUris?: vscode.Uri[]) => {
       await openOverlayPreview(uri, selectedUris);
+    }),
+    vscode.commands.registerCommand("s2pPreview.openOverlayPicker", async (uri?: vscode.Uri) => {
+      const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!targetUri || !isTouchstoneUri(targetUri)) {
+        vscode.window.showErrorMessage("S2P Preview: open or select a Touchstone file first.");
+        return;
+      }
+
+      await openOverlayPickerForUri(targetUri);
     }),
     vscode.window.registerCustomEditorProvider(
       CUSTOM_EDITOR_VIEW_TYPE,
@@ -155,6 +166,55 @@ async function openOverlayPreview(uri?: vscode.Uri, selectedUris?: vscode.Uri[])
   }
 }
 
+async function openOverlayPickerFromWebview(panel: vscode.WebviewPanel): Promise<void> {
+  const state = activePreviewDocuments.get(panel);
+  if (!state) {
+    await panel.webview.postMessage({
+      type: "operationStatus",
+      message: "Open a single Touchstone file first, then select files for overlay."
+    });
+    return;
+  }
+
+  await openOverlayPickerForUri(state.uri);
+}
+
+async function openOverlayPickerForUri(uri: vscode.Uri): Promise<void> {
+  const folder = dirnameUri(uri);
+  const entries = await vscode.workspace.fs.readDirectory(folder);
+  const candidates = entries
+    .filter(([, fileType]) => (fileType & vscode.FileType.File) !== 0)
+    .map(([name]) => vscode.Uri.joinPath(folder, name))
+    .filter(isTouchstoneUri)
+    .sort((left, right) => basename(left).localeCompare(basename(right), undefined, { numeric: true }));
+
+  if (candidates.length === 0) {
+    vscode.window.showErrorMessage("S2P Preview: no Touchstone files found in this folder.");
+    return;
+  }
+
+  const sourceKey = uri.toString();
+  const selected = await vscode.window.showQuickPick(
+    candidates.map((candidate) => ({
+      label: basename(candidate),
+      description: vscode.workspace.asRelativePath(candidate, false),
+      picked: candidate.toString() === sourceKey,
+      uri: candidate
+    })),
+    {
+      canPickMany: true,
+      matchOnDescription: true,
+      placeHolder: "Select Touchstone files to overlay"
+    }
+  );
+
+  if (!selected || selected.length === 0) {
+    return;
+  }
+
+  await openOverlayPreview(undefined, selected.map((item) => item.uri));
+}
+
 function selectedTouchstoneUris(uri?: vscode.Uri, selectedUris?: vscode.Uri[]): vscode.Uri[] {
   const candidates = selectedUris && selectedUris.length > 0
     ? selectedUris
@@ -207,6 +267,9 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
           return;
         case "setDefaultPreset":
           await setDefaultPresetFromWebview(panel, message.label);
+          return;
+        case "openOverlayPicker":
+          await openOverlayPickerFromWebview(panel);
           return;
         case "renormalize":
           await renormalizeFromWebview(panel, message.targetOhms, message.selectedPorts);
@@ -367,8 +430,8 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
     const text = new TextDecoder("utf-8").decode(bytes);
     const doc = parseTouchstone(text, basename(uri), TOUCHSTONE_PARSE_OPTIONS);
     const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
-    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false) });
-    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings());
+    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false), uri });
+    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
   } catch (error) {
     activePreviewDocuments.delete(panel);
     panel.webview.html = renderErrorHtml(panel.webview, uri, error);
@@ -378,28 +441,44 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
 function renderPreviewHtml(
   webview: vscode.Webview,
   model: PreviewModel,
-  settings: PassbandSettings
+  settings: PassbandSettings,
+  options: { canPickOverlay?: boolean } = {}
 ): string {
   const defaultPreset = resolveInitialPassband(model, settings);
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
-  const controls = renderControls(defaultPreset, model.impedance);
+  const controls = renderControls(defaultPreset, options.canPickOverlay === true);
+  const impedanceControls = model.impedance ? renderImpedanceControls(model.impedance, defaultPreset) : "";
   const traceSelector = renderTraceSelector(model.series, defaultPreset);
   const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
+  const sidePanel = traceSelector || impedanceControls
+    ? `<aside class="side-panel" aria-label="Preview controls">${traceSelector}${impedanceControls}</aside>`
+    : "";
 
   return htmlShell(
     webview,
     `
-    <header>
-      <h1>${escapeHtml(model.title)}</h1>
-      <p class="file">${escapeHtml(model.fileLabel)}</p>
+    <header class="preview-header">
+      <div>
+        <p class="eyebrow">Touchstone Preview</p>
+        <h1>${escapeHtml(model.title)}</h1>
+        <p class="file">${escapeHtml(model.fileLabel)}</p>
+      </div>
+      <div class="header-summary" aria-label="Preview summary">
+        <span>${model.series.length} traces</span>
+        <span>${model.metricRows ? "2-port metrics" : "N-port view"}</span>
+      </div>
     </header>
     ${controls}
-    ${traceSelector}
     ${warnings}
-    ${chart}
-    ${metricsTable}
+    <section class="preview-grid">
+      <main class="plot-column">
+        ${chart}
+        ${metricsTable}
+      </main>
+      ${sidePanel}
+    </section>
   `,
     script
   );
@@ -486,7 +565,8 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
   return `
     <section class="trace-controls" aria-label="Visible S-parameters">
       <fieldset>
-        <legend>Visible S-parameters</legend>
+        <legend>S-Parameter Matrix</legend>
+        <p class="section-note">Choose traces to plot.</p>
         <div class="trace-selector-grid" style="--trace-port-count: ${portCount}">
           ${header}
           ${rows}
@@ -514,14 +594,14 @@ function selectedTraceKeysForPreset(
   return selected.size > 0 ? selected : undefined;
 }
 
-function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpedanceModel): string {
+function renderControls(defaultPreset: PassbandPreset, canPickOverlay: boolean): string {
   return `
     <section class="controls" aria-label="Passband controls">
-      <label>
+      <label class="control-field">
         Start GHz
         <input id="passband-start" type="number" value="${defaultPreset.startGHz}" step="0.01" />
       </label>
-      <label>
+      <label class="control-field">
         Stop GHz
         <input id="passband-stop" type="number" value="${defaultPreset.stopGHz}" step="0.01" />
       </label>
@@ -532,7 +612,7 @@ function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpeda
         </button>
         <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
       </div>
-      ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
+      ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
       <span id="passband-status" role="status" aria-live="polite"></span>
     </section>
   `;
@@ -551,8 +631,9 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: Passb
       `).join("");
 
   return `
+      <section class="z0-card">
       <fieldset class="z0-ports">
-        <legend>Normalize Z0, Ohm</legend>
+        <legend>Z0 Renormalization</legend>
         <div class="port-target-row">
           ${ports}
         </div>
@@ -561,6 +642,7 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: Passb
         <span>${escapeHtml(formatFileReferenceOhms(impedance.referenceOhms))}</span>
         <span id="effective-z0">${escapeHtml(formatEffectiveReferenceOhms(effectiveInitialReferenceOhms(impedance, initial)))}</span>
       </span>
+      </section>
   `;
 }
 
@@ -759,6 +841,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const presetMenu = document.getElementById("preset-menu");
     const presetMenuLabel = document.getElementById("preset-menu-label");
     const presetMenuRange = document.getElementById("preset-menu-range");
+    const overlayPickerButton = document.getElementById("overlay-picker-button");
     const status = document.getElementById("passband-status");
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
@@ -1240,6 +1323,11 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       setPresetMenuOpen(presetMenu.hidden);
     });
     presetMenu.addEventListener("click", (event) => event.stopPropagation());
+    if (overlayPickerButton) {
+      overlayPickerButton.addEventListener("click", () => {
+        vscode.postMessage({ type: "openOverlayPicker" });
+      });
+    }
     document.addEventListener("click", () => setPresetMenuOpen(false));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
@@ -1366,40 +1454,234 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
   <style>
-    body { color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); margin: 0; padding: 18px; }
-    header { margin-bottom: 12px; }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    h2 { font-size: 15px; margin: 18px 0 8px; }
-    .file { color: var(--vscode-descriptionForeground); margin: 0; }
-    .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin: 14px 0 8px; }
-    .controls label { display: grid; gap: 4px; color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .controls input { width: 96px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); padding: 4px 6px; font: inherit; }
-    .controls fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-    .controls legend { margin: 0 0 4px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .port-target-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 4px; max-width: 520px; }
-    .port-target { display: grid; grid-template-columns: auto 74px; align-items: center; gap: 4px; min-height: 27px; padding: 3px 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; }
-    .controls .port-target-toggle { display: inline-flex; align-items: center; gap: 3px; color: var(--vscode-foreground); font-size: 12px; }
-    .port-target-toggle input { width: auto; margin: 0; padding: 0; }
-    .controls .port-target-input { width: 62px; min-width: 0; padding: 3px 5px; }
-    .z0-info { display: grid; gap: 2px; max-width: 360px; color: var(--vscode-descriptionForeground); font-size: 12px; align-self: center; }
-    .controls button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid var(--vscode-button-border, transparent); padding: 5px 10px; font: inherit; cursor: pointer; }
-    .controls button:hover { background: var(--vscode-button-hoverBackground); }
-    .controls button:disabled { color: var(--vscode-disabledForeground); background: var(--vscode-button-secondaryBackground); cursor: default; }
-    .split-button { display: inline-grid; gap: 2px; justify-items: center; min-width: 86px; }
+    :root {
+      --surface: var(--vscode-sideBar-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+      --surface-strong: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+      --surface-muted: var(--vscode-button-secondaryBackground, var(--vscode-editor-background));
+      --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.35)));
+      --muted: var(--vscode-descriptionForeground);
+      --accent: var(--vscode-focusBorder, #4f8cff);
+      --warning-border: var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-border, #d6aa00));
+      --warning-bg: var(--vscode-inputValidation-warningBackground, rgba(214, 170, 0, 0.12));
+      --warning-fg: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, var(--vscode-foreground)));
+    }
+    * { box-sizing: border-box; }
+    body {
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      font-family: var(--vscode-font-family);
+      margin: 0;
+      padding: 18px;
+    }
+    h1 { font-size: 23px; line-height: 1.18; margin: 2px 0 6px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    input { accent-color: var(--accent); }
+    .preview-header,
+    .controls,
+    .warnings,
+    .preview-grid {
+      max-width: 1280px;
+    }
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: start;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .file { color: var(--muted); margin: 0; }
+    .header-summary {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 190px;
+    }
+    .header-summary span {
+      padding: 5px 8px;
+      color: var(--muted);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+      margin: 0 0 12px;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .control-field {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .controls input,
+    .port-target-input {
+      color: var(--vscode-input-foreground);
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--border));
+      border-radius: 4px;
+      padding: 6px 8px;
+      font: inherit;
+    }
+    .controls input { width: 112px; }
+    .controls > button,
+    .split-button {
+      min-height: 48px;
+      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-background);
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 6px;
+      padding: 7px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .controls > button:hover,
+    .split-button:hover { background: var(--vscode-button-hoverBackground); }
+    .secondary-action {
+      color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+      background: var(--vscode-button-secondaryBackground, transparent);
+      border-color: var(--border);
+    }
+    .secondary-action:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground)); }
+    .split-button { display: inline-grid; gap: 2px; justify-items: center; min-width: 128px; }
     .split-button small { color: inherit; font-size: 11px; line-height: 1.2; opacity: 0.82; }
-    #passband-status { color: var(--vscode-inputValidation-warningForeground, var(--vscode-descriptionForeground)); min-height: 20px; align-self: center; }
-    .warnings { margin: 8px 0 10px; padding: 7px 9px; color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, var(--vscode-foreground))); background: var(--vscode-inputValidation-warningBackground, transparent); border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-border, var(--vscode-panel-border))); font-size: 12px; }
+    #passband-status {
+      color: var(--warning-fg);
+      min-height: 20px;
+      align-self: center;
+      flex: 1 1 220px;
+      font-size: 12px;
+    }
+    .warnings {
+      margin: 0 0 12px;
+      padding: 9px 11px;
+      color: var(--warning-fg);
+      background: var(--warning-bg);
+      border: 1px solid var(--warning-border);
+      border-radius: 6px;
+      font-size: 12px;
+    }
     .warnings p { margin: 0; }
     .warnings p + p { margin-top: 4px; }
-    .trace-controls { margin: 8px 0 10px; }
-    .trace-controls fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-    .trace-controls legend { margin: 0 0 5px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .trace-selector-grid { display: grid; grid-template-columns: 42px repeat(var(--trace-port-count), minmax(62px, 76px)); gap: 4px; align-items: stretch; overflow-x: auto; max-width: 100%; }
-    .trace-header, .trace-corner { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+      gap: 12px;
+      align-items: start;
+    }
+    .plot-column { min-width: 0; }
+    .side-panel {
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+    .trace-controls,
+    .z0-card,
+    .metrics,
+    .chart-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .trace-controls,
+    .z0-card { padding: 12px; }
+    .trace-controls fieldset,
+    .z0-ports { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .trace-controls legend,
+    .z0-ports legend {
+      margin: 0;
+      padding: 0;
+      color: var(--vscode-foreground);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .section-note {
+      margin: 4px 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .trace-selector-grid {
+      display: grid;
+      grid-template-columns: 48px repeat(var(--trace-port-count), minmax(58px, 1fr));
+      gap: 5px;
+      align-items: stretch;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+    .trace-header,
+    .trace-corner {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      color: var(--muted);
+      font-size: 11px;
+    }
     .trace-corner { justify-content: start; }
-    .trace-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 25px; padding: 2px 4px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; white-space: nowrap; }
+    .trace-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      min-height: 30px;
+      padding: 4px 6px;
+      color: var(--vscode-foreground);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
     .trace-toggle input { width: auto; margin: 0; padding: 0; }
-    .trace-swatch { width: 14px; height: 3px; background: var(--trace-color, var(--vscode-foreground)); }
+    .trace-swatch { width: 15px; height: 3px; border-radius: 999px; background: var(--trace-color, var(--vscode-foreground)); }
+    .port-target-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .port-target {
+      display: grid;
+      grid-template-columns: auto minmax(64px, 1fr);
+      align-items: center;
+      gap: 7px;
+      min-height: 35px;
+      padding: 5px 7px;
+      color: var(--vscode-foreground);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .port-target-toggle { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-foreground); font-size: 12px; }
+    .port-target-toggle input { width: auto; margin: 0; padding: 0; }
+    .port-target-input { width: 100%; min-width: 0; padding: 5px 6px; }
+    .z0-info {
+      display: grid;
+      gap: 4px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
     .series-hidden { display: none; }
     .preset-dropdown { position: relative; }
     .preset-menu-button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border-color: var(--vscode-panel-border); }
@@ -1419,12 +1701,12 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .preset-menu .preset-delete:hover:not(:disabled) { color: var(--vscode-errorForeground); background: transparent; outline: 1px solid var(--vscode-errorForeground); outline-offset: -1px; }
     .preset-menu .preset-delete:disabled { color: var(--vscode-disabledForeground); cursor: default; }
     .preset-menu .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); text-align: left; border-top: 1px solid var(--vscode-panel-border, #555); }
-    .chart-wrap { border: 1px solid var(--vscode-panel-border); overflow: auto; background: var(--vscode-editor-background); }
-    svg { display: block; width: min(100%, 1120px); height: auto; }
+    .chart-wrap { overflow: auto; padding: 12px; }
+    svg { display: block; width: 100%; min-width: 760px; height: auto; }
     .chart-bg { fill: var(--vscode-editor-background); }
-    .passband, .legend-passband { fill: #4f46e5; opacity: 0.12; }
-    .grid { stroke: var(--vscode-editorIndentGuide-background); stroke-width: 1; }
-    .axis { fill: none; stroke: var(--vscode-foreground); stroke-width: 1.2; }
+    .passband, .legend-passband { fill: var(--accent); opacity: 0.14; }
+    .grid { stroke: var(--vscode-editorIndentGuide-background, var(--border)); stroke-width: 1; opacity: 0.75; }
+    .axis { fill: none; stroke: var(--vscode-foreground); stroke-width: 1.2; opacity: 0.82; }
     .guide { stroke: var(--vscode-descriptionForeground); stroke-width: 1; stroke-dasharray: 5 5; }
     .guide-label, .tick, .axis-label, .legend text { fill: var(--vscode-descriptionForeground); font-size: 12px; }
     .curve, .legend-line { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
@@ -1454,12 +1736,19 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .overlay-5 { stroke: #eab308; }
     .overlay-6 { stroke: #14b8a6; }
     .overlay-7 { stroke: #f472b6; }
+    .metrics { margin-top: 12px; padding: 14px; }
     table { border-collapse: collapse; min-width: 540px; }
     th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
     th { color: var(--vscode-descriptionForeground); font-weight: 600; }
-    .metric-status { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
+    .metric-status { color: var(--muted); margin: 0 0 8px; }
     code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; }
     .error { border: 1px solid var(--vscode-inputValidation-errorBorder); padding: 12px; background: var(--vscode-inputValidation-errorBackground); }
+    @media (max-width: 1080px) {
+      .preview-grid { grid-template-columns: 1fr; }
+      .side-panel { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .preview-header { display: grid; }
+      .header-summary { justify-content: flex-start; }
+    }
   </style>
 </head>
 <body>${body}${scriptBlock}</body>
@@ -1477,6 +1766,13 @@ function range(start: number, end: number, step: number): number[] {
 function basename(uri: vscode.Uri): string {
   const normalized = uri.path.replace(/\\/g, "/");
   return decodeURIComponent(normalized.slice(normalized.lastIndexOf("/") + 1));
+}
+
+function dirnameUri(uri: vscode.Uri): vscode.Uri {
+  const normalized = uri.path.replace(/\\/g, "/");
+  const slashIndex = normalized.lastIndexOf("/");
+  const folderPath = slashIndex > 0 ? normalized.slice(0, slashIndex) : "/";
+  return uri.with({ path: folderPath });
 }
 
 function escapeHtml(value: string): string {
