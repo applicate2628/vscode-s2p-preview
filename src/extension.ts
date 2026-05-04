@@ -21,7 +21,7 @@ import {
 import type { PreviewImpedanceModel } from "./previewModel";
 import { renormalizeDocument } from "./renormalize";
 import { broadcastSettingsUpdated } from "./settingsSync";
-import { parseTouchstone } from "./touchstone";
+import { parseTouchstone, traceSelectorLabel } from "./touchstone";
 import type { S2pRow, TouchstoneDocument, TraceSelector } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
@@ -827,17 +827,12 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const guides = [-3, -15, -20];
   const hasOverlaySeries = series.some((item) => item.cssClass.includes("overlay-line"));
   const showSeriesLegend = hasOverlaySeries || series.length <= 4;
-  const legendItems = showSeriesLegend ? series.map((item, index) => {
-    const visibilityClass = item.defaultVisible ? "" : " series-hidden";
-    const key = traceKey(item.selector);
-    return `
-      <div id="legend-${index}" class="legend-item${visibilityClass}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}>
-        <span class="legend-line ${escapeHtml(item.cssClass)}"></span>
-        <span>${escapeHtml(item.label)}</span>
-      </div>
-    `;
-  }).join("") : "";
-  const legendModeClass = hasOverlaySeries ? "stacked" : "inline";
+  const legendItems = showSeriesLegend
+    ? hasOverlaySeries
+      ? renderGroupedLegendItems(series)
+      : renderInlineLegendItems(series)
+    : "";
+  const legendModeClass = hasOverlaySeries ? "grouped" : "inline";
 
   return `
     <section class="chart-wrap">
@@ -866,6 +861,50 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
       </div>
     </section>
   `;
+}
+
+function renderInlineLegendItems(series: ChartSeries[]): string {
+  return series.map((item, index) => renderLegendItem(item, index, item.label)).join("");
+}
+
+function renderGroupedLegendItems(series: ChartSeries[]): string {
+  const groups: Array<{ label: string; entries: Array<{ item: ChartSeries; index: number }> }> = [];
+  const byLabel = new Map<string, { label: string; entries: Array<{ item: ChartSeries; index: number }> }>();
+
+  for (const entry of series.map((item, index) => ({ item, index }))) {
+    const label = entry.item.groupLabel ?? "File";
+    let group = byLabel.get(label);
+    if (!group) {
+      group = { label, entries: [] };
+      byLabel.set(label, group);
+      groups.push(group);
+    }
+    group.entries.push(entry);
+  }
+
+  return groups.map((group) => `
+    <div class="legend-file-row">
+      <span class="legend-file-label" title="${escapeHtml(group.label)}">${escapeHtml(group.label)}</span>
+      <div class="legend-file-items">
+        ${group.entries.map((entry) => renderLegendItem(entry.item, entry.index, legendTraceLabel(entry.item))).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderLegendItem(item: ChartSeries, index: number, label: string): string {
+  const visibilityClass = item.defaultVisible ? "" : " series-hidden";
+  const key = traceKey(item.selector);
+  return `
+    <div id="legend-${index}" class="legend-item${visibilityClass}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}>
+      <span class="legend-line ${escapeHtml(item.cssClass)}"></span>
+      <span>${escapeHtml(label)}</span>
+    </div>
+  `;
+}
+
+function legendTraceLabel(item: ChartSeries): string {
+  return item.selector ? traceSelectorLabel(item.selector) : item.label;
 }
 
 function linePoints(rows: ChartPoint[], chart: ChartGeometry): string {
@@ -1877,12 +1916,14 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
       height: 76px;
+      min-height: 38px;
+      max-height: 280px;
       margin: 10px 0 0 64px;
       color: var(--muted);
       font-size: 12px;
-      overflow-x: hidden;
-      overflow-y: auto;
+      overflow: auto;
       padding-right: 6px;
+      resize: vertical;
     }
     .chart-legend.inline {
       display: flex;
@@ -1890,12 +1931,32 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       gap: 8px 28px;
       align-items: center;
     }
-    .chart-legend.stacked {
+    .chart-legend.grouped {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
-      gap: 6px;
+      gap: 7px;
       align-items: center;
       align-content: start;
+    }
+    .legend-file-row {
+      display: grid;
+      grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-width: 0;
+    }
+    .legend-file-label {
+      color: var(--vscode-foreground);
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .legend-file-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 22px;
+      min-width: 0;
     }
     .legend-item {
       display: inline-flex;
@@ -1963,6 +2024,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       .header-summary { justify-content: flex-start; }
       .z0-card { grid-template-columns: 1fr; width: 100%; }
       .chart-legend { margin-left: 0; }
+      .legend-file-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
     }
   </style>
 </head>
