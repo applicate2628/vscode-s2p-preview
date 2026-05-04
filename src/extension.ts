@@ -3,10 +3,12 @@ import * as vscode from "vscode";
 import {
   AUTO_PASSBAND_LABEL,
   DEFAULT_PASSBAND_PRESETS,
-  PassbandPreset,
   createAutoPassband,
-  normalizeDefaultPassbandLabel
+  normalizeDefaultPassbandLabel,
+  sanitizePresetRenormalize,
+  sanitizePresetTraces
 } from "./passband";
+import type { PassbandPreset, PassbandPresetRenormalize, PassbandPresetTrace } from "./passband";
 import { formatEffectiveReferenceOhms, formatFileReferenceOhms } from "./impedanceDisplay";
 import {
   ChartPoint,
@@ -39,7 +41,13 @@ interface PreviewDocumentState {
 }
 
 type WebviewMessage =
-  | { type: "addPreset"; startGHz: number; stopGHz: number }
+  | {
+    type: "addPreset";
+    startGHz: number;
+    stopGHz: number;
+    traces?: PassbandPresetTrace[];
+    renormalize?: PassbandPresetRenormalize;
+  }
   | { type: "deletePreset"; label: string }
   | { type: "setDefaultPreset"; label: string }
   | { type: "renormalize"; targetOhms: number[]; selectedPorts: boolean[] };
@@ -186,7 +194,13 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
     try {
       switch (message.type) {
         case "addPreset":
-          await addPresetFromWebview(panel, message.startGHz, message.stopGHz);
+          await addPresetFromWebview(
+            panel,
+            message.startGHz,
+            message.stopGHz,
+            message.traces,
+            message.renormalize
+          );
           return;
         case "deletePreset":
           await deletePresetFromWebview(panel, message.label);
@@ -212,7 +226,13 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
   });
 }
 
-async function addPresetFromWebview(panel: vscode.WebviewPanel, startGHz: number, stopGHz: number): Promise<void> {
+async function addPresetFromWebview(
+  panel: vscode.WebviewPanel,
+  startGHz: number,
+  stopGHz: number,
+  traces: unknown,
+  renormalize: unknown
+): Promise<void> {
   const normalized = normalizePresetRange(startGHz, stopGHz);
   if (!normalized) {
     await panel.webview.postMessage({ type: "operationStatus", message: "Cannot save invalid passband range." });
@@ -246,6 +266,14 @@ async function addPresetFromWebview(panel: vscode.WebviewPanel, startGHz: number
     startGHz: normalized.startGHz,
     stopGHz: normalized.stopGHz
   };
+  const presetTraces = sanitizePresetTraces(traces);
+  if (presetTraces) {
+    nextPreset.traces = presetTraces;
+  }
+  const presetRenormalize = sanitizePresetRenormalize(renormalize);
+  if (presetRenormalize) {
+    nextPreset.renormalize = presetRenormalize;
+  }
   const nextPresets = [...settings.presets, nextPreset];
   await updatePassbandSettings(panel, nextPresets, nextPreset.label, `Preset saved: ${nextPreset.label}`);
 }
@@ -356,7 +384,7 @@ function renderPreviewHtml(
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
   const controls = renderControls(defaultPreset, model.impedance);
-  const traceSelector = renderTraceSelector(model.series);
+  const traceSelector = renderTraceSelector(model.series, defaultPreset);
   const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
 
@@ -407,7 +435,7 @@ function renderWarnings(warnings: string[]): string {
   `;
 }
 
-function renderTraceSelector(series: ChartSeries[]): string {
+function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): string {
   const selectableSeries = series
     .map((item, index) => ({ item, index }))
     .filter((entry) => entry.item.selector);
@@ -428,6 +456,7 @@ function renderTraceSelector(series: ChartSeries[]): string {
     bySelector.set(`${entry.item.selector?.toPort}:${entry.item.selector?.fromPort}`, entry);
   }
 
+  const selectedTraceKeys = selectedTraceKeysForPreset(selectableSeries, preset);
   const header = [
     `<span class="trace-corner">to/from</span>`,
     ...range(1, portCount, 1).map((port) => `<span class="trace-header">P${port}</span>`)
@@ -440,10 +469,13 @@ function renderTraceSelector(series: ChartSeries[]): string {
         return `<span class="trace-empty"></span>`;
       }
 
-      const checked = entry.item.defaultVisible ? "checked" : "";
+      const key = `${toPort}:${fromPort}`;
+      const checked = selectedTraceKeys
+        ? selectedTraceKeys.has(key)
+        : entry.item.defaultVisible;
       return `
         <label class="trace-toggle">
-          <input type="checkbox" data-trace-series="${entry.index}" ${checked} />
+          <input type="checkbox" data-trace-series="${entry.index}" data-trace-to="${toPort}" data-trace-from="${fromPort}" data-trace-default="${entry.item.defaultVisible ? "true" : "false"}" ${checked ? "checked" : ""} />
           <span class="trace-swatch ${escapeHtml(entry.item.cssClass)}"></span>
           <span>${escapeHtml(entry.item.label)}</span>
         </label>
@@ -464,6 +496,24 @@ function renderTraceSelector(series: ChartSeries[]): string {
   `;
 }
 
+function selectedTraceKeysForPreset(
+  selectableSeries: Array<{ item: ChartSeries; index: number }>,
+  preset: PassbandPreset
+): Set<string> | undefined {
+  const available = new Set(
+    selectableSeries.map((entry) => `${entry.item.selector?.toPort}:${entry.item.selector?.fromPort}`)
+  );
+  const selected = new Set<string>();
+  for (const trace of preset.traces ?? []) {
+    const key = `${trace.toPort}:${trace.fromPort}`;
+    if (available.has(key)) {
+      selected.add(key);
+    }
+  }
+
+  return selected.size > 0 ? selected : undefined;
+}
+
 function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpedanceModel): string {
   return `
     <section class="controls" aria-label="Passband controls">
@@ -482,20 +532,21 @@ function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpeda
         </button>
         <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
       </div>
-      ${impedance ? renderImpedanceControls(impedance) : ""}
+      ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
       <span id="passband-status" role="status" aria-live="polite"></span>
     </section>
   `;
 }
 
-function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
+function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: PassbandPreset): string {
+  const initial = initialRenormalizeState(impedance, preset);
   const ports = impedance.referenceOhms.map((sourceOhms, index) => `
         <div class="port-target">
           <label class="port-target-toggle">
-            <input type="checkbox" data-z0-port="${index}" ${impedance.selectedPorts[index] ? "checked" : ""} />
+            <input type="checkbox" data-z0-port="${index}" ${initial.selectedPorts[index] ? "checked" : ""} />
             <span>P${index + 1}</span>
           </label>
-          <input class="port-target-input" type="number" data-z0-target="${index}" aria-label="P${index + 1} target Z0 Ohm" value="${impedance.targetOhms[index] ?? sourceOhms}" min="0.001" step="1" />
+          <input class="port-target-input" type="number" data-z0-target="${index}" aria-label="P${index + 1} target Z0 Ohm" value="${initial.targetOhms[index] ?? sourceOhms}" min="0.001" step="1" />
         </div>
       `).join("");
 
@@ -508,14 +559,37 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
       </fieldset>
       <span class="z0-info">
         <span>${escapeHtml(formatFileReferenceOhms(impedance.referenceOhms))}</span>
-        <span id="effective-z0">${escapeHtml(formatEffectiveReferenceOhms(effectiveInitialReferenceOhms(impedance)))}</span>
+        <span id="effective-z0">${escapeHtml(formatEffectiveReferenceOhms(effectiveInitialReferenceOhms(impedance, initial)))}</span>
       </span>
   `;
 }
 
-function effectiveInitialReferenceOhms(impedance: PreviewImpedanceModel): number[] {
+function initialRenormalizeState(
+  impedance: PreviewImpedanceModel,
+  preset: PassbandPreset
+): PassbandPresetRenormalize {
+  const selectedPorts = impedance.referenceOhms.map(() => false);
+  const targetOhms = impedance.referenceOhms.slice();
+  const renormalize = preset.renormalize;
+  if (renormalize) {
+    for (let index = 0; index < targetOhms.length; index += 1) {
+      const target = renormalize.targetOhms[index];
+      if (Number.isFinite(target) && target > 0) {
+        targetOhms[index] = target;
+      }
+      selectedPorts[index] = renormalize.selectedPorts[index] === true;
+    }
+  }
+
+  return { selectedPorts, targetOhms };
+}
+
+function effectiveInitialReferenceOhms(
+  impedance: PreviewImpedanceModel,
+  initial: PassbandPresetRenormalize
+): number[] {
   return impedance.referenceOhms.map((sourceOhms, index) =>
-    impedance.selectedPorts[index] ? impedance.targetOhms[index] : sourceOhms
+    initial.selectedPorts[index] ? initial.targetOhms[index] : sourceOhms
   );
 }
 
@@ -870,6 +944,81 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       }
     }
 
+    function applyTracePreset(traces) {
+      if (traceInputs.length === 0) {
+        return;
+      }
+
+      const available = new Set(traceInputs.map((input) => input.dataset.traceTo + ":" + input.dataset.traceFrom));
+      const selected = new Set();
+      if (Array.isArray(traces)) {
+        for (const trace of traces) {
+          if (!trace) {
+            continue;
+          }
+          const key = Number(trace.toPort) + ":" + Number(trace.fromPort);
+          if (available.has(key)) {
+            selected.add(key);
+          }
+        }
+      }
+
+      for (const input of traceInputs) {
+        const key = input.dataset.traceTo + ":" + input.dataset.traceFrom;
+        input.checked = selected.size > 0 ? selected.has(key) : input.dataset.traceDefault === "true";
+      }
+      updateTraceVisibility();
+    }
+
+    function currentTracePreset() {
+      return traceInputs
+        .filter((input) => input.checked)
+        .map((input) => ({
+          toPort: Number(input.dataset.traceTo),
+          fromPort: Number(input.dataset.traceFrom)
+        }))
+        .filter((trace) => Number.isInteger(trace.toPort) && Number.isInteger(trace.fromPort));
+    }
+
+    function applyRenormalizePreset(renormalize) {
+      if (!impedance || targetOhmsInputs.length === 0) {
+        return false;
+      }
+
+      const selectedPorts = Array.isArray(renormalize && renormalize.selectedPorts)
+        ? renormalize.selectedPorts
+        : [];
+      const targetOhms = Array.isArray(renormalize && renormalize.targetOhms)
+        ? renormalize.targetOhms
+        : [];
+      for (const input of targetOhmsInputs) {
+        const index = Number(input.dataset.z0Target);
+        const target = Number(targetOhms[index]);
+        input.value = String(Number.isFinite(target) && target > 0
+          ? target
+          : impedance.referenceOhms[index]);
+      }
+      for (const input of portInputs) {
+        const index = Number(input.dataset.z0Port);
+        input.checked = selectedPorts[index] === true;
+      }
+      return true;
+    }
+
+    function currentRenormalizePreset() {
+      if (!impedance || targetOhmsInputs.length === 0) {
+        return undefined;
+      }
+
+      return {
+        selectedPorts: portInputs.map((input) => input.checked),
+        targetOhms: targetOhmsInputs.map((input, index) => {
+          const target = Number(input.value);
+          return Number.isFinite(target) && target > 0 ? target : impedance.referenceOhms[index];
+        })
+      };
+    }
+
     function linePoints(rows) {
       return rows.map((row) => x(row.freqGHz).toFixed(2) + "," + y(row.db).toFixed(2)).join(" ");
     }
@@ -963,7 +1112,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       const addButton = document.createElement("button");
       addButton.type = "button";
       addButton.className = "preset-menu-add";
-      addButton.textContent = "+ Add current range";
+      addButton.textContent = "+ Add current view";
       addButton.addEventListener("click", () => {
         if (!currentRangeIsValid()) {
           status.textContent = "Cannot save invalid passband range.";
@@ -973,7 +1122,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         vscode.postMessage({
           type: "addPreset",
           startGHz: Number(startInput.value),
-          stopGHz: Number(stopInput.value)
+          stopGHz: Number(stopInput.value),
+          traces: currentTracePreset(),
+          renormalize: currentRenormalizePreset()
         });
       });
       presetMenu.appendChild(addButton);
@@ -991,9 +1142,14 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       activePresetLabel = preset.label;
       startInput.value = String(preset.startGHz);
       stopInput.value = String(preset.stopGHz);
+      applyTracePreset(preset.traces);
+      const renormalizeApplied = applyRenormalizePreset(preset.renormalize);
       updatePresetControls();
       renderPresetMenu();
       updatePassband();
+      if (renormalizeApplied) {
+        updateImpedancePreview();
+      }
       if (persistDefault) {
         vscode.postMessage({ type: "setDefaultPreset", label: preset.label });
       }
@@ -1108,9 +1264,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     });
 
     renderPresetMenu();
-    updateTraceVisibility();
-    updatePresetControls();
-    updatePassband();
+    applyPreset(selectedPreset(), false);
   `;
 }
 
@@ -1144,12 +1298,22 @@ function sanitizePresets(value: unknown): PassbandPreset[] {
       continue;
     }
 
-    seenLabels.add(label);
-    presets.push({
+    const preset: PassbandPreset = {
       label,
       startGHz: range.startGHz,
       stopGHz: range.stopGHz
-    });
+    };
+    const traces = sanitizePresetTraces(item.traces);
+    if (traces) {
+      preset.traces = traces;
+    }
+    const renormalize = sanitizePresetRenormalize(item.renormalize);
+    if (renormalize) {
+      preset.renormalize = renormalize;
+    }
+
+    seenLabels.add(label);
+    presets.push(preset);
   }
 
   return presets.length > 0 ? presets : DEFAULT_PASSBAND_PRESETS;

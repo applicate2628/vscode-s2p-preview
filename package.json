@@ -42,7 +42,7 @@
       "properties": {
         "s2pPreview.passbandPresets": {
           "type": "array",
-          "markdownDescription": "Named passband presets shown in the S2P preview.",
+          "markdownDescription": "Named view presets shown in the S2P preview. Presets always store a passband range and may also store visible S-parameter traces plus per-port Z0 renormalization.",
           "default": [
             {
               "label": "1-10 GHz",
@@ -70,6 +70,56 @@
               "stopGHz": {
                 "type": "number",
                 "description": "Passband stop frequency in GHz."
+              },
+              "traces": {
+                "type": "array",
+                "description": "Optional visible S-parameter traces for this preset.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "toPort",
+                    "fromPort"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "toPort": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Destination/output port number in Sij."
+                    },
+                    "fromPort": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "description": "Source/input port number in Sij."
+                    }
+                  }
+                }
+              },
+              "renormalize": {
+                "type": "object",
+                "description": "Optional per-port Z0 renormalization state for this preset.",
+                "required": [
+                  "selectedPorts",
+                  "targetOhms"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "selectedPorts": {
+                    "type": "array",
+                    "description": "Per-port flags indicating which ports should be renormalized.",
+                    "items": {
+                      "type": "boolean"
+                    }
+                  },
+                  "targetOhms": {
+                    "type": "array",
+                    "description": "Per-port target real reference impedance values in Ohm.",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
               }
             }
           }

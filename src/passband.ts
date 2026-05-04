@@ -2,6 +2,18 @@ export interface PassbandPreset {
   label: string;
   startGHz: number;
   stopGHz: number;
+  traces?: PassbandPresetTrace[];
+  renormalize?: PassbandPresetRenormalize;
+}
+
+export interface PassbandPresetTrace {
+  toPort: number;
+  fromPort: number;
+}
+
+export interface PassbandPresetRenormalize {
+  selectedPorts: boolean[];
+  targetOhms: number[];
 }
 
 export const AUTO_PASSBAND_LABEL = "Auto / Full file range";
@@ -37,4 +49,63 @@ export function createAutoPassband(rows: readonly { freqGHz: number }[]): Passba
   }
 
   return { label: AUTO_PASSBAND_LABEL, startGHz, stopGHz: startGHz + 1 };
+}
+
+export function sanitizePresetTraces(value: unknown): PassbandPresetTrace[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const traces: PassbandPresetTrace[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    const toPort = Number(item.toPort);
+    const fromPort = Number(item.fromPort);
+    if (!Number.isInteger(toPort) || !Number.isInteger(fromPort) || toPort <= 0 || fromPort <= 0) {
+      continue;
+    }
+
+    const key = `${toPort}:${fromPort}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    traces.push({ toPort, fromPort });
+  }
+
+  return traces.length > 0 ? traces : undefined;
+}
+
+export function sanitizePresetRenormalize(value: unknown): PassbandPresetRenormalize | undefined {
+  if (!isRecord(value) || !Array.isArray(value.selectedPorts) || !Array.isArray(value.targetOhms)) {
+    return undefined;
+  }
+
+  const count = Math.min(value.selectedPorts.length, value.targetOhms.length);
+  if (count === 0) {
+    return undefined;
+  }
+
+  const selectedPorts: boolean[] = [];
+  const targetOhms: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const target = Number(value.targetOhms[index]);
+    if (!Number.isFinite(target) || target <= 0) {
+      return undefined;
+    }
+
+    selectedPorts.push(value.selectedPorts[index] === true);
+    targetOhms.push(target);
+  }
+
+  return { selectedPorts, targetOhms };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

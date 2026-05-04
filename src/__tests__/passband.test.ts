@@ -4,7 +4,9 @@ import {
   AUTO_PASSBAND_LABEL,
   DEFAULT_PASSBAND_PRESETS,
   createAutoPassband,
-  normalizeDefaultPassbandLabel
+  normalizeDefaultPassbandLabel,
+  sanitizePresetRenormalize,
+  sanitizePresetTraces
 } from "../passband";
 
 test("default preset list starts with 1-10 GHz", () => {
@@ -42,5 +44,43 @@ test("createAutoPassband spans the full finite file frequency range", () => {
       startGHz: 0.25,
       stopGHz: 12
     }
+  );
+});
+
+test("sanitizes S-parameter trace presets", () => {
+  assert.deepEqual(
+    sanitizePresetTraces([
+      { toPort: 1, fromPort: 1 },
+      { toPort: 4, fromPort: 1 },
+      { toPort: 4, fromPort: 1 },
+      { toPort: 0, fromPort: 1 },
+      { toPort: 2.5, fromPort: 1 },
+      { toPort: 2, fromPort: Number.NaN }
+    ]),
+    [
+      { toPort: 1, fromPort: 1 },
+      { toPort: 4, fromPort: 1 }
+    ]
+  );
+});
+
+test("sanitizes renormalization presets", () => {
+  assert.deepEqual(
+    sanitizePresetRenormalize({
+      selectedPorts: [false, true, true],
+      targetOhms: [50, 75, 100]
+    }),
+    {
+      selectedPorts: [false, true, true],
+      targetOhms: [50, 75, 100]
+    }
+  );
+
+  assert.equal(
+    sanitizePresetRenormalize({
+      selectedPorts: [true],
+      targetOhms: [0]
+    }),
+    undefined
   );
 });
