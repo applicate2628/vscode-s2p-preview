@@ -1813,9 +1813,13 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
+      height: 76px;
       margin: 10px 0 0 64px;
       color: var(--muted);
       font-size: 12px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-right: 6px;
     }
     .chart-legend.inline {
       display: flex;
@@ -1828,6 +1832,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       grid-template-columns: minmax(0, 1fr);
       gap: 6px;
       align-items: center;
+      align-content: start;
     }
     .legend-item {
       display: inline-flex;
