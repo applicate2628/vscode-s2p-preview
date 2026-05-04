@@ -14,23 +14,33 @@ import {
   buildOverlayPreviewModel,
   buildPreviewModel
 } from "./previewModel";
+import type { PreviewImpedanceModel } from "./previewModel";
+import { renormalizeDocument } from "./renormalize";
 import { broadcastSettingsUpdated } from "./settingsSync";
-import { S2pRow, parseTouchstone } from "./touchstone";
+import { parseTouchstone } from "./touchstone";
+import type { S2pRow, TouchstoneDocument } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 const OVERLAY_SELECTION_ERROR = "S2P Preview: select one or more Touchstone files first.";
 const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
 const activePreviewPanels = new Set<vscode.WebviewPanel>();
+const activePreviewDocuments = new Map<vscode.WebviewPanel, PreviewDocumentState>();
 
 interface PassbandSettings {
   presets: PassbandPreset[];
   defaultPresetLabel: string;
 }
 
+interface PreviewDocumentState {
+  doc: TouchstoneDocument;
+  fileLabel: string;
+}
+
 type WebviewMessage =
   | { type: "addPreset"; startGHz: number; stopGHz: number }
   | { type: "deletePreset"; label: string }
-  | { type: "setDefaultPreset"; label: string };
+  | { type: "setDefaultPreset"; label: string }
+  | { type: "renormalize"; targetOhms: number; selectedPorts: boolean[] };
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -182,6 +192,9 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
         case "setDefaultPreset":
           await setDefaultPresetFromWebview(panel, message.label);
           return;
+        case "renormalize":
+          await renormalizeFromWebview(panel, message.targetOhms, message.selectedPorts);
+          return;
       }
     } catch (error) {
       const messageText = error instanceof Error ? error.message : String(error);
@@ -193,6 +206,7 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
   panel.onDidDispose(() => {
     disposable.dispose();
     activePreviewPanels.delete(panel);
+    activePreviewDocuments.delete(panel);
   });
 }
 
@@ -280,6 +294,25 @@ async function broadcastPassbandSettings(statusPanel?: vscode.WebviewPanel, stat
   await broadcastSettingsUpdated(activePreviewPanels, getPassbandSettings(), statusPanel, status);
 }
 
+async function renormalizeFromWebview(
+  panel: vscode.WebviewPanel,
+  targetOhms: number,
+  selectedPorts: boolean[]
+): Promise<void> {
+  const state = activePreviewDocuments.get(panel);
+  if (!state) {
+    return;
+  }
+
+  const doc = renormalizeDocument(state.doc, targetOhms, selectedPorts);
+  const model = buildPreviewModel(doc, state.fileLabel);
+  await panel.webview.postMessage({
+    type: "renormalizedPreview",
+    seriesRows: model.series.map((series) => series.rows),
+    metricRows: model.metricRows ?? []
+  });
+}
+
 async function updateConfigurationValue<T>(key: string, value: T): Promise<void> {
   await vscode.workspace.getConfiguration("s2pPreview").update(key, value, passbandConfigurationTarget());
 }
@@ -303,8 +336,10 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
     const text = new TextDecoder("utf-8").decode(bytes);
     const doc = parseTouchstone(text, basename(uri));
     const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
+    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false) });
     panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings());
   } catch (error) {
+    activePreviewDocuments.delete(panel);
     panel.webview.html = renderErrorHtml(panel.webview, uri, error);
   }
 }
@@ -317,7 +352,7 @@ function renderPreviewHtml(
   const defaultPreset = resolveInitialPassband(model, settings);
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
-  const controls = renderControls(defaultPreset);
+  const controls = renderControls(defaultPreset, model.impedance);
   const script = renderClientScript(model, settings);
 
   return htmlShell(
@@ -353,7 +388,7 @@ function renderErrorHtml(webview: vscode.Webview, uri: vscode.Uri, error: unknow
   );
 }
 
-function renderControls(defaultPreset: PassbandPreset): string {
+function renderControls(defaultPreset: PassbandPreset, impedance?: PreviewImpedanceModel): string {
   return `
     <section class="controls" aria-label="Passband controls">
       <label>
@@ -371,8 +406,32 @@ function renderControls(defaultPreset: PassbandPreset): string {
         </button>
         <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
       </div>
+      ${impedance ? renderImpedanceControls(impedance) : ""}
       <span id="passband-status" role="status" aria-live="polite"></span>
     </section>
+  `;
+}
+
+function renderImpedanceControls(impedance: PreviewImpedanceModel): string {
+  const ports = impedance.referenceOhms.map((_, index) => `
+        <label class="port-toggle">
+          <input type="checkbox" data-z0-port="${index}" ${impedance.selectedPorts[index] ? "checked" : ""} />
+          P${index + 1}
+        </label>
+      `).join("");
+
+  return `
+      <label>
+        Target Z0, Ohm
+        <input id="target-ohms" type="number" value="${impedance.defaultTargetOhms}" min="0.001" step="1" />
+      </label>
+      <fieldset class="z0-ports">
+        <legend>Renormalize ports</legend>
+        <div class="port-toggle-row">
+          ${ports}
+        </div>
+      </fieldset>
+      <span class="z0-reference">${escapeHtml(formatReferenceOhms(impedance.referenceOhms))}</span>
   `;
 }
 
@@ -413,7 +472,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         ${xTicks.map((tick) => `<line class="grid" x1="${xCoord(tick, chart).toFixed(2)}" y1="${chart.margin.top}" x2="${xCoord(tick, chart).toFixed(2)}" y2="${chart.margin.top + chart.plotHeight}" />`).join("")}
         ${yTicks.map((tick) => `<line class="grid" x1="${chart.margin.left}" y1="${yCoord(tick, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(tick, chart).toFixed(2)}" />`).join("")}
         ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
-        ${series.map((item) => `<polyline class="curve ${escapeHtml(item.cssClass)}" points="${linePoints(item.rows, chart)}" />`).join("")}
+        ${series.map((item, index) => `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}" points="${linePoints(item.rows, chart)}" />`).join("")}
         <rect class="axis" x="${chart.margin.left}" y="${chart.margin.top}" width="${chart.plotWidth}" height="${chart.plotHeight}" />
         ${xTicks.map((tick) => `<text class="tick" x="${xCoord(tick, chart).toFixed(2)}" y="${chart.height - 28}" text-anchor="middle">${tick}</text>`).join("")}
         ${yTicks.map((tick) => `<text class="tick" x="${chart.margin.left - 12}" y="${(yCoord(tick, chart) + 4).toFixed(2)}" text-anchor="end">${tick}</text>`).join("")}
@@ -507,6 +566,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
   const chart = chartGeometry(model.series);
   const metricRows = model.metricRows ?? [];
   const metricRowsJson = jsonForScript(metricRows);
+  const impedanceJson = jsonForScript(model.impedance);
   const settingsJson = jsonForScript(settings);
   const hasMetricRows = model.metricRows ? "true" : "false";
 
@@ -515,7 +575,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const AUTO_PASSBAND_LABEL = ${jsonForScript(AUTO_PASSBAND_LABEL)};
     const METRICS_UNAVAILABLE = "2-port passband metrics are not available for this file.";
     const metricRows = ${metricRowsJson};
+    const impedance = ${impedanceJson};
     const hasMetricRows = ${hasMetricRows};
+    let currentMetricRows = metricRows;
     let settings = ${settingsJson};
     let activePresetLabel = settings.defaultPresetLabel;
     const chart = {
@@ -523,8 +585,12 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       maxFreq: ${chart.maxFreq},
       displayMinFreq: ${chart.displayMinFreq},
       displayMaxFreq: ${chart.displayMaxFreq},
+      yMin: ${chart.yMin},
+      yMax: ${chart.yMax},
+      marginTop: ${chart.margin.top},
       marginLeft: ${chart.margin.left},
-      plotWidth: ${chart.plotWidth}
+      plotWidth: ${chart.plotWidth},
+      plotHeight: ${chart.plotHeight}
     };
 
     const startInput = document.getElementById("passband-start");
@@ -537,6 +603,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
+    const targetOhmsInput = document.getElementById("target-ohms");
+    const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
 
     startInput.min = String(chart.minFreq);
     startInput.max = String(chart.maxFreq);
@@ -545,6 +613,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function x(freqGHz) {
       return chart.marginLeft + ((freqGHz - chart.displayMinFreq) / (chart.displayMaxFreq - chart.displayMinFreq)) * chart.plotWidth;
+    }
+
+    function y(db) {
+      return chart.marginTop + ((chart.yMax - db) / (chart.yMax - chart.yMin)) * chart.plotHeight;
     }
 
     function formatRange(startGHz, stopGHz) {
@@ -611,7 +683,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       let activeStart = null;
       let activeEnd = null;
 
-      for (const row of metricRows) {
+      for (const row of currentMetricRows) {
         if (predicate(row)) {
           if (activeStart === null) {
             activeStart = row.freqGHz;
@@ -649,6 +721,44 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function coverageGHz(bands) {
       return bands.reduce((sum, band) => sum + Math.max(0, band.endGHz - band.startGHz), 0);
+    }
+
+    function updateImpedancePreview() {
+      if (!impedance || !targetOhmsInput) {
+        return;
+      }
+
+      const targetOhms = Number(targetOhmsInput.value);
+      if (!Number.isFinite(targetOhms) || targetOhms <= 0) {
+        status.textContent = "Use a positive target impedance.";
+        return;
+      }
+
+      vscode.postMessage({
+        type: "renormalize",
+        targetOhms,
+        selectedPorts: portInputs.map((input) => input.checked)
+      });
+    }
+
+    function updateRenormalizedPreview(message) {
+      updateChartSeries(message.seriesRows);
+      currentMetricRows = hasMetricRows ? message.metricRows : [];
+      updatePassband();
+    }
+
+    function updateChartSeries(seriesRows) {
+      seriesRows.forEach((rows, index) => {
+        const curve = document.getElementById("series-" + index);
+        if (!curve) {
+          return;
+        }
+        curve.setAttribute("points", linePoints(rows));
+      });
+    }
+
+    function linePoints(rows) {
+      return rows.map((row) => x(row.freqGHz).toFixed(2) + "," + y(row.db).toFixed(2)).join(" ");
     }
 
     function clearMetrics(message) {
@@ -805,7 +915,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       }
       setMetricStatus("");
 
-      const passbandRows = metricRows.filter((row) => row.freqGHz >= startGHz && row.freqGHz <= stopGHz);
+      const passbandRows = currentMetricRows.filter((row) => row.freqGHz >= startGHz && row.freqGHz <= stopGHz);
       if (passbandRows.length === 0) {
         clearMetrics("No sample points inside range.");
         return;
@@ -829,6 +939,12 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     startInput.addEventListener("input", updatePassband);
     stopInput.addEventListener("input", updatePassband);
+    if (targetOhmsInput) {
+      targetOhmsInput.addEventListener("input", updateImpedancePreview);
+    }
+    for (const input of portInputs) {
+      input.addEventListener("change", updateImpedancePreview);
+    }
     presetMenuButton.addEventListener("click", (event) => {
       event.stopPropagation();
       setPresetMenuOpen(presetMenu.hidden);
@@ -934,6 +1050,21 @@ function formatRangeLabel(startGHz: number, stopGHz: number): string {
   return `${formatGHz(startGHz)}-${formatGHz(stopGHz)} GHz`;
 }
 
+function formatReferenceOhms(referenceOhms: readonly number[]): string {
+  const unique = Array.from(new Set(referenceOhms.map(formatOhm)));
+  if (unique.length === 1) {
+    return `File Z0: ${unique[0]} Ohm`;
+  }
+
+  const perPort = referenceOhms.map((value, index) => `P${index + 1} ${formatOhm(value)}`).join(", ");
+  return `File Z0: ${perPort} Ohm`;
+}
+
+function formatOhm(value: number): string {
+  const fixed = value.toFixed(3);
+  return fixed.replace(/\.?0+$/, "");
+}
+
 function formatGHz(value: number): string {
   const fixed = value.toFixed(3);
   return fixed.replace(/\.?0+$/, "");
@@ -957,6 +1088,12 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin: 14px 0 8px; }
     .controls label { display: grid; gap: 4px; color: var(--vscode-descriptionForeground); font-size: 12px; }
     .controls input { width: 96px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); padding: 4px 6px; font: inherit; }
+    .controls fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .controls legend { margin: 0 0 4px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .port-toggle-row { display: flex; flex-wrap: wrap; gap: 4px; max-width: 260px; }
+    .port-toggle { display: inline-flex; align-items: center; gap: 3px; min-height: 27px; padding: 0 5px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; }
+    .port-toggle input { width: auto; margin: 0; padding: 0; }
+    .z0-reference { max-width: 320px; color: var(--vscode-descriptionForeground); font-size: 12px; align-self: center; }
     .controls button { color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid var(--vscode-button-border, transparent); padding: 5px 10px; font: inherit; cursor: pointer; }
     .controls button:hover { background: var(--vscode-button-hoverBackground); }
     .controls button:disabled { color: var(--vscode-disabledForeground); background: var(--vscode-button-secondaryBackground); cursor: default; }

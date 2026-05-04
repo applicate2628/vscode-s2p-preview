@@ -23,6 +23,29 @@ test("keeps two-port preview metrics and default S11 S21 S22 curves", () => {
   assert.deepEqual(model.series.map((series) => series.label), ["S11", "S21", "S22"]);
   assert.equal(model.metricRows?.[0].s21db.toFixed(2), "-0.92");
   assert.equal(model.series[1].rows[0].db.toFixed(2), "-0.92");
+  assert.equal(model.impedance?.defaultTargetOhms, 50);
+  assert.deepEqual(model.impedance?.selectedPorts, [true, true]);
+});
+
+test("starts mixed-reference previews with only matching source ports selected", () => {
+  const doc = parseTouchstone(
+    [
+      "[Version] 2.1",
+      "# GHZ S RI R 50",
+      "[Number of Ports] 2",
+      "[Reference] 50 75",
+      "[Network Data]",
+      "1 0.2 0 0 0 0 0 0.2 0",
+      "[End]"
+    ].join("\n"),
+    "mixed.s2p"
+  );
+  const model = previewModel.buildPreviewModel(doc, "mixed.s2p");
+
+  assert.deepEqual(model.impedance?.referenceOhms, [50, 75]);
+  assert.equal(model.impedance?.defaultTargetOhms, 50);
+  assert.deepEqual(model.impedance?.selectedPorts, [true, false]);
+  assert.deepEqual(model.impedance?.samples[0].matrix[1][1], { re: 0.2, im: 0 });
 });
 
 test("builds an n-port preview model with default curves and no two-port metrics", () => {
@@ -58,6 +81,7 @@ test("builds an overlay preview model with S21 for two-port files", () => {
   assert.deepEqual(model.series.map((series) => series.label), ["m_000.s2p S21", "m_001.s2p S21"]);
   assert.deepEqual(model.series.map((series) => series.cssClass), ["overlay-0", "overlay-1"]);
   assert.equal(model.series[0].rows[0].db.toFixed(2), "-1.94");
+  assert.equal(model.impedance, undefined);
 });
 
 test("builds an overlay preview model with S11 for mixed one-port and two-port files", () => {

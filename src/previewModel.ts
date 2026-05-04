@@ -1,10 +1,13 @@
 import {
-  S2pRow,
-  TouchstoneDocument,
-  TraceSelector,
   toS2pRows,
   traceDbRows,
   traceSelectorLabel
+} from "./touchstone";
+import type {
+  S2pRow,
+  TouchstoneDocument,
+  TouchstoneSample,
+  TraceSelector
 } from "./touchstone";
 
 export interface ChartPoint {
@@ -16,6 +19,14 @@ export interface ChartSeries {
   label: string;
   cssClass: string;
   rows: ChartPoint[];
+  selector?: TraceSelector;
+}
+
+export interface PreviewImpedanceModel {
+  referenceOhms: number[];
+  defaultTargetOhms: number;
+  selectedPorts: boolean[];
+  samples: TouchstoneSample[];
 }
 
 export interface PreviewModel {
@@ -23,6 +34,7 @@ export interface PreviewModel {
   fileLabel: string;
   series: ChartSeries[];
   metricRows?: S2pRow[];
+  impedance?: PreviewImpedanceModel;
 }
 
 export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): PreviewModel {
@@ -35,20 +47,24 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
         {
           label: "S11",
           cssClass: "s11",
+          selector: { toPort: 1, fromPort: 1 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s11db }))
         },
         {
           label: "S21",
           cssClass: "s21",
+          selector: { toPort: 2, fromPort: 1 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s21db }))
         },
         {
           label: "S22",
           cssClass: "s22",
+          selector: { toPort: 2, fromPort: 2 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s22db }))
         }
       ],
-      metricRows
+      metricRows,
+      impedance: buildImpedanceModel(doc)
     };
   }
 
@@ -56,7 +72,8 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
   return {
     title: `S${doc.ports}P Preview`,
     fileLabel,
-    series: selectors.map((selector) => traceSeries(doc, selector))
+    series: selectors.map((selector) => traceSeries(doc, selector)),
+    impedance: buildImpedanceModel(doc)
   };
 }
 
@@ -94,6 +111,20 @@ function traceSeries(doc: TouchstoneDocument, selector: TraceSelector): ChartSer
   return {
     label,
     cssClass: label.toLowerCase(),
+    selector,
     rows: traceDbRows(doc, selector)
+  };
+}
+
+function buildImpedanceModel(doc: TouchstoneDocument): PreviewImpedanceModel {
+  const defaultTargetOhms = doc.referenceOhms[0] ?? 50;
+  return {
+    referenceOhms: doc.referenceOhms.slice(),
+    defaultTargetOhms,
+    selectedPorts: doc.referenceOhms.map((value) => Math.abs(value - defaultTargetOhms) <= 1e-9),
+    samples: doc.samples.map((sample) => ({
+      freqGHz: sample.freqGHz,
+      matrix: sample.matrix.map((row) => row.map((value) => ({ re: value.re, im: value.im })))
+    }))
   };
 }

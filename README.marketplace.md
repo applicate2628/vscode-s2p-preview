@@ -13,6 +13,7 @@ Preview Touchstone `S`-parameter files for RF simulation work directly in VS Cod
 - Opens in `Auto / Full file range` mode and highlights an editable passband.
 - Keeps `1-10 GHz` as the first configurable preset.
 - Adds and deletes passband presets from the preview.
+- Renormalizes selected ports to an editable real `Target Z0, Ohm` value in single-file previews.
 - Shows guide lines at `-3 dB`, `-15 dB`, and `-20 dB`.
 
 Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, PNG export, and generic high-port `.sNp` visualization.
@@ -32,6 +33,7 @@ To compare selected files, multi-select Touchstone files in Explorer, right-clic
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
 Use the preset dropdown to activate a preset, save the current range as a new preset, or delete a preset with the `x` at the end of its row.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
+Use `Target Z0, Ohm` and the port checkboxes to renormalize selected ports; the initial value comes from the Touchstone option line or `[Reference]` block.
 
 To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Editor`.
 
@@ -68,3 +70,4 @@ See the repository `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyrigh
 - `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.
 - `VS Code`: Visual Studio Code.
 - `Y`/`Z`/`G`/`H`: admittance, impedance, inverse hybrid, and hybrid network-parameter families.
+- `Z0`: reference impedance.
