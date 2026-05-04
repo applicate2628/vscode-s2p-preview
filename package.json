@@ -102,7 +102,7 @@
     "compile": "tsc -p ./",
     "test": "npm run compile && node --test out/__tests__/*.test.js",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package --no-dependencies"
+    "package": "npm run compile && vsce package --no-dependencies --readme-path README.marketplace.md"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
