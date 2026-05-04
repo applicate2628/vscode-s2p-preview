@@ -1,3 +1,39 @@
+export interface ComplexValue {
+  re: number;
+  im: number;
+}
+
+export interface TouchstoneSample {
+  freqGHz: number;
+  matrix: ComplexValue[][];
+}
+
+export type TouchstoneVersion = "1.x" | "2.0" | "2.1";
+
+export type TouchstoneParameter = "S";
+
+export type TouchstoneFormat = "MA" | "DB" | "RI";
+
+export interface TouchstoneDocument {
+  version: TouchstoneVersion;
+  ports: number;
+  parameter: TouchstoneParameter;
+  format: TouchstoneFormat;
+  referenceOhms: number[];
+  samples: TouchstoneSample[];
+  sourceName: string;
+}
+
+export interface TraceSelector {
+  toPort: number;
+  fromPort: number;
+}
+
+export interface TraceDbRow {
+  freqGHz: number;
+  db: number;
+}
+
 export interface S2pRow {
   freqGHz: number;
   s11db: number;
@@ -28,6 +64,11 @@ interface TouchstoneOptions {
   referenceOhms: number;
 }
 
+type SupportedTouchstoneOptions = TouchstoneOptions & {
+  parameter: TouchstoneParameter;
+  format: TouchstoneFormat;
+};
+
 const FREQ_SCALE_TO_GHZ: Record<string, number> = {
   HZ: 1e-9,
   KHZ: 1e-6,
@@ -35,52 +76,194 @@ const FREQ_SCALE_TO_GHZ: Record<string, number> = {
   GHZ: 1
 };
 
-export function parseS2p(text: string): S2pRow[] {
+const SUPPORTED_FORMATS: TouchstoneFormat[] = ["MA", "DB", "RI"];
+
+export function parseTouchstone(text: string, sourceName = "untitled.s2p"): TouchstoneDocument {
+  const ports = inferPortCount(sourceName);
+  const expectedValueCount = 1 + ports * ports * 2;
   const lines = text.split(/\r?\n/);
   let options: TouchstoneOptions | undefined;
-  const rows: S2pRow[] = [];
+  const samples: TouchstoneSample[] = [];
+  let pendingValues: number[] = [];
 
   for (const rawLine of lines) {
     const withoutComment = rawLine.split("!")[0].trim();
     if (!withoutComment) {
       continue;
     }
+    if (withoutComment.startsWith("[")) {
+      throw unsupportedKeywordError(withoutComment);
+    }
     if (withoutComment.startsWith("#")) {
+      if (pendingValues.length > 0) {
+        throw incompleteNetworkDataError(ports, expectedValueCount, pendingValues.length);
+      }
       options = parseOptions(withoutComment);
+      assertSupportedOptions(options);
       continue;
     }
     if (!options) {
       throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
     }
-    const values = withoutComment.split(/\s+/).map(Number);
-    if (values.length < 9 || values.some((value) => Number.isNaN(value))) {
-      continue;
+
+    assertSupportedOptions(options);
+
+    pendingValues = pendingValues.concat(parseNumericRow(withoutComment));
+
+    while (pendingValues.length >= expectedValueCount) {
+      const sampleValues = pendingValues.slice(0, expectedValueCount);
+      pendingValues = pendingValues.slice(expectedValueCount);
+      samples.push(valuesToSample(sampleValues, ports, options));
     }
-    const freqGHz = values[0] * FREQ_SCALE_TO_GHZ[options.freqUnit];
-    // 2-port Touchstone column order: f S11 S21 S12 S22 — each as (val1 val2) pair.
-    rows.push({
-      freqGHz,
-      s11db: pairToDb(values[1], values[2], options.format),
-      s21db: pairToDb(values[3], values[4], options.format),
-      s12db: pairToDb(values[5], values[6], options.format),
-      s22db: pairToDb(values[7], values[8], options.format)
-    });
   }
 
   if (!options) {
     throw new Error("Missing Touchstone option line. Expected '# GHZ S MA R 50'.");
   }
-  if (options.parameter !== "S") {
-    throw new Error(`Unsupported parameter '${options.parameter}'. Expected 'S' (S-parameters).`);
+  assertSupportedOptions(options);
+  if (pendingValues.length > 0) {
+    throw incompleteNetworkDataError(ports, expectedValueCount, pendingValues.length);
   }
-  if (!["MA", "DB", "RI"].includes(options.format)) {
-    throw new Error(`Unsupported Touchstone format '# ${options.freqUnit} ${options.parameter} ${options.format}'. Supported: MA, DB, RI.`);
-  }
-  if (rows.length === 0) {
-    throw new Error("No S2P data rows found.");
+  if (samples.length === 0) {
+    throw new Error("No Touchstone data rows found.");
   }
 
-  return rows;
+  return {
+    version: "1.x",
+    ports,
+    parameter: options.parameter,
+    format: options.format,
+    referenceOhms: Array.from({ length: ports }, () => options.referenceOhms),
+    samples,
+    sourceName
+  };
+}
+
+export function parseS2p(text: string): S2pRow[] {
+  return toS2pRows(parseTouchstone(text, "untitled.s2p"));
+}
+
+export function toS2pRows(doc: TouchstoneDocument): S2pRow[] {
+  if (doc.ports !== 2) {
+    throw new Error("toS2pRows supports only 2-port Touchstone documents.");
+  }
+
+  return doc.samples.map((sample) => ({
+    freqGHz: sample.freqGHz,
+    s11db: complexToDb(sample.matrix[0][0]),
+    s21db: complexToDb(sample.matrix[1][0]),
+    s12db: complexToDb(sample.matrix[0][1]),
+    s22db: complexToDb(sample.matrix[1][1])
+  }));
+}
+
+export function complexToDb(value: ComplexValue): number {
+  return magnitudeToDb(Math.hypot(value.re, value.im));
+}
+
+export function traceSelectorLabel(selector: TraceSelector): string {
+  return `S${selector.toPort}${selector.fromPort}`;
+}
+
+export function traceDbRows(doc: TouchstoneDocument, selector: TraceSelector): TraceDbRow[] {
+  validateTraceSelector(doc, selector);
+  const toIndex = selector.toPort - 1;
+  const fromIndex = selector.fromPort - 1;
+
+  return doc.samples.map((sample) => ({
+    freqGHz: sample.freqGHz,
+    db: complexToDb(sample.matrix[toIndex][fromIndex])
+  }));
+}
+
+function assertSupportedOptions(options: TouchstoneOptions): asserts options is SupportedTouchstoneOptions {
+  if (options.parameter !== "S") {
+    throw new Error(`Unsupported parameter '${options.parameter}'. Current implementation supports only S-parameters.`);
+  }
+  if (!isTouchstoneFormat(options.format)) {
+    throw new Error(`Unsupported Touchstone format '# ${options.freqUnit} ${options.parameter} ${options.format}'. Supported: MA, DB, RI.`);
+  }
+}
+
+function isTouchstoneFormat(format: string): format is TouchstoneFormat {
+  return SUPPORTED_FORMATS.includes(format as TouchstoneFormat);
+}
+
+function inferPortCount(sourceName: string): number {
+  const match = sourceName.match(/\.s(\d+)p$/i);
+  if (!match) {
+    return 2;
+  }
+
+  const ports = Number(match[1]);
+  return Number.isInteger(ports) && ports > 0 ? ports : 2;
+}
+
+function parseNumericRow(line: string): number[] {
+  const values = line.split(/\s+/).map(Number);
+  if (values.some((value) => !Number.isFinite(value))) {
+    throw new Error("Malformed numeric Touchstone data row.");
+  }
+
+  return values;
+}
+
+function valuesToSample(values: number[], ports: number, options: SupportedTouchstoneOptions): TouchstoneSample {
+  const freqGHz = values[0] * FREQ_SCALE_TO_GHZ[options.freqUnit];
+  const pairs: ComplexValue[] = [];
+  for (let index = 1; index < values.length; index += 2) {
+    pairs.push(pairToComplex(values[index], values[index + 1], options.format));
+  }
+
+  return {
+    freqGHz,
+    matrix: pairsToMatrix(pairs, ports)
+  };
+}
+
+function incompleteNetworkDataError(ports: number, expectedValueCount: number, foundValueCount: number): Error {
+  return new Error(`Incomplete ${ports}-port Touchstone network data. Expected ${expectedValueCount} numeric values per sample, found ${foundValueCount}.`);
+}
+
+function unsupportedKeywordError(line: string): Error {
+  const keyword = line.match(/^\[[^\]]+\]/)?.[0] ?? line.split(/\s+/)[0];
+  return new Error(`Unsupported Touchstone keyword '${keyword}'. Touchstone 2.x keyword parsing is added in the next task.`);
+}
+
+function validateTraceSelector(doc: TouchstoneDocument, selector: TraceSelector): void {
+  if (!Number.isInteger(selector.toPort) || !Number.isInteger(selector.fromPort)) {
+    throw new Error(`Invalid trace selector '${traceSelectorLabel(selector)}'. Port numbers must be integers.`);
+  }
+  if (selector.toPort < 1 || selector.toPort > doc.ports || selector.fromPort < 1 || selector.fromPort > doc.ports) {
+    throw new Error(`Trace selector '${traceSelectorLabel(selector)}' is outside the ${doc.ports}-port Touchstone document.`);
+  }
+}
+
+function pairsToMatrix(pairs: ComplexValue[], ports: number): ComplexValue[][] {
+  const matrix = createEmptyMatrix(ports);
+
+  if (ports === 2) {
+    for (let fromIndex = 0; fromIndex < ports; fromIndex += 1) {
+      for (let toIndex = 0; toIndex < ports; toIndex += 1) {
+        matrix[toIndex][fromIndex] = pairs[fromIndex * ports + toIndex];
+      }
+    }
+    return matrix;
+  }
+
+  for (let rowIndex = 0; rowIndex < ports; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < ports; columnIndex += 1) {
+      matrix[rowIndex][columnIndex] = pairs[rowIndex * ports + columnIndex];
+    }
+  }
+
+  return matrix;
+}
+
+function createEmptyMatrix(ports: number): ComplexValue[][] {
+  return Array.from({ length: ports }, () =>
+    Array.from({ length: ports }, () => ({ re: 0, im: 0 }))
+  );
 }
 
 export function computeMetrics(rows: S2pRow[], passbandStartGHz = 1, passbandEndGHz = 10): S2pMetrics {
@@ -131,25 +314,25 @@ function magnitudeToDb(magnitude: number): number {
   return 20 * Math.log10(Math.max(magnitude, 1e-300));
 }
 
-/**
- * Convert a Touchstone 2-value pair (v1, v2) for an S-parameter element into dB.
- *  - MA: v1 = magnitude (linear), v2 = angle (deg)  → dB = 20*log10(v1)
- *  - DB: v1 = dB                  v2 = angle (deg)  → dB = v1
- *  - RI: v1 = real,               v2 = imaginary    → dB = 20*log10(|v1+jv2|)
- */
-function pairToDb(v1: number, v2: number, format: string): number {
+function pairToComplex(v1: number, v2: number, format: TouchstoneFormat): ComplexValue {
   switch (format) {
     case "MA":
-      return magnitudeToDb(v1);
+      return magnitudeAngleToComplex(v1, v2);
     case "DB":
-      return v1;
-    case "RI": {
-      const magnitude = Math.sqrt(v1 * v1 + v2 * v2);
-      return magnitudeToDb(magnitude);
-    }
+      return magnitudeAngleToComplex(Math.pow(10, v1 / 20), v2);
+    case "RI":
+      return { re: v1, im: v2 };
     default:
       throw new Error(`Unsupported Touchstone format '${format}'. Supported: MA, DB, RI.`);
   }
+}
+
+function magnitudeAngleToComplex(magnitude: number, angleDeg: number): ComplexValue {
+  const angleRad = angleDeg * Math.PI / 180;
+  return {
+    re: magnitude * Math.cos(angleRad),
+    im: magnitude * Math.sin(angleRad)
+  };
 }
 
 function maxBy<T>(items: T[], score: (item: T) => number): T {
