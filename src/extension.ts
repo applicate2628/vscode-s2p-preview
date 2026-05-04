@@ -15,13 +15,14 @@ import {
   ChartSeries,
   PreviewModel,
   buildOverlayPreviewModel,
-  buildPreviewModel
+  buildPreviewModel,
+  buildPreviewModelWithOverlays
 } from "./previewModel";
 import type { PreviewImpedanceModel } from "./previewModel";
 import { renormalizeDocument } from "./renormalize";
 import { broadcastSettingsUpdated } from "./settingsSync";
 import { parseTouchstone } from "./touchstone";
-import type { S2pRow, TouchstoneDocument } from "./touchstone";
+import type { S2pRow, TouchstoneDocument, TraceSelector } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 const OVERLAY_SELECTION_ERROR = "S2P Preview: select one or more Touchstone files first.";
@@ -29,6 +30,7 @@ const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
 const TOUCHSTONE_PARSE_OPTIONS = { allowIncompleteFinalSample: true };
 const activePreviewPanels = new Set<vscode.WebviewPanel>();
 const activePreviewDocuments = new Map<vscode.WebviewPanel, PreviewDocumentState>();
+let lastActivePreviewPanel: vscode.WebviewPanel | undefined;
 
 interface PassbandSettings {
   presets: PassbandPreset[];
@@ -36,6 +38,13 @@ interface PassbandSettings {
 }
 
 interface PreviewDocumentState {
+  doc: TouchstoneDocument;
+  fileLabel: string;
+  uri: vscode.Uri;
+  overlays: OverlayDocumentState[];
+}
+
+interface OverlayDocumentState {
   doc: TouchstoneDocument;
   fileLabel: string;
   uri: vscode.Uri;
@@ -137,16 +146,14 @@ async function openOverlayPreview(uri?: vscode.Uri, selectedUris?: vscode.Uri[])
     return;
   }
 
+  const targetPanel = activePreviewPanel();
+  if (targetPanel) {
+    await applyOverlayUrisToPanel(targetPanel, uris);
+    return;
+  }
+
   try {
-    const docs = await Promise.all(uris.map(async (item) => {
-      const fileLabel = basename(item);
-      const bytes = await vscode.workspace.fs.readFile(item);
-      const text = new TextDecoder("utf-8").decode(bytes);
-      return {
-        doc: parseTouchstone(text, fileLabel, TOUCHSTONE_PARSE_OPTIONS),
-        fileLabel
-      };
-    }));
+    const docs = await readTouchstoneDocuments(uris);
     const model = buildOverlayPreviewModel(docs);
     const panel = vscode.window.createWebviewPanel(
       "s2pPreview",
@@ -176,10 +183,10 @@ async function openOverlayPickerFromWebview(panel: vscode.WebviewPanel): Promise
     return;
   }
 
-  await openOverlayPickerForUri(state.uri);
+  await openOverlayPickerForUri(state.uri, panel);
 }
 
-async function openOverlayPickerForUri(uri: vscode.Uri): Promise<void> {
+async function openOverlayPickerForUri(uri: vscode.Uri, targetPanel?: vscode.WebviewPanel): Promise<void> {
   const folder = dirnameUri(uri);
   const entries = await vscode.workspace.fs.readDirectory(folder);
   const candidates = entries
@@ -198,7 +205,8 @@ async function openOverlayPickerForUri(uri: vscode.Uri): Promise<void> {
     candidates.map((candidate) => ({
       label: basename(candidate),
       description: vscode.workspace.asRelativePath(candidate, false),
-      picked: candidate.toString() === sourceKey,
+      detail: candidate.toString() === sourceKey ? "Current file is already plotted." : undefined,
+      picked: false,
       uri: candidate
     })),
     {
@@ -212,7 +220,48 @@ async function openOverlayPickerForUri(uri: vscode.Uri): Promise<void> {
     return;
   }
 
+  if (targetPanel) {
+    await applyOverlayUrisToPanel(targetPanel, selected.map((item) => item.uri));
+    return;
+  }
+
   await openOverlayPreview(undefined, selected.map((item) => item.uri));
+}
+
+async function applyOverlayUrisToPanel(panel: vscode.WebviewPanel, uris: vscode.Uri[]): Promise<void> {
+  const state = activePreviewDocuments.get(panel);
+  if (!state) {
+    await openOverlayPreview(undefined, uris);
+    return;
+  }
+
+  const sourceKey = state.uri.toString();
+  const overlayUris = selectedTouchstoneUris(undefined, uris)
+    .filter((item) => item.toString() !== sourceKey);
+  if (overlayUris.length === 0) {
+    await panel.webview.postMessage({
+      type: "operationStatus",
+      message: "Select at least one additional Touchstone file to overlay."
+    });
+    return;
+  }
+
+  state.overlays = await readTouchstoneDocuments(overlayUris);
+  const model = buildPreviewModelWithOverlays(state.doc, state.fileLabel, state.overlays);
+  panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
+}
+
+async function readTouchstoneDocuments(uris: vscode.Uri[]): Promise<OverlayDocumentState[]> {
+  return Promise.all(uris.map(async (item) => {
+    const fileLabel = vscode.workspace.asRelativePath(item, false);
+    const bytes = await vscode.workspace.fs.readFile(item);
+    const text = new TextDecoder("utf-8").decode(bytes);
+    return {
+      doc: parseTouchstone(text, basename(item), TOUCHSTONE_PARSE_OPTIONS),
+      fileLabel,
+      uri: item
+    };
+  }));
 }
 
 function selectedTouchstoneUris(uri?: vscode.Uri, selectedUris?: vscode.Uri[]): vscode.Uri[] {
@@ -249,6 +298,7 @@ function isTouchstoneUri(uri: vscode.Uri): boolean {
 
 function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
   activePreviewPanels.add(panel);
+  lastActivePreviewPanel = panel;
 
   const disposable = panel.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
     try {
@@ -286,7 +336,29 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
     disposable.dispose();
     activePreviewPanels.delete(panel);
     activePreviewDocuments.delete(panel);
+    if (lastActivePreviewPanel === panel) {
+      lastActivePreviewPanel = activePreviewPanels.values().next().value;
+    }
   });
+  panel.onDidChangeViewState((event) => {
+    if (event.webviewPanel.active) {
+      lastActivePreviewPanel = event.webviewPanel;
+    }
+  });
+}
+
+function activePreviewPanel(): vscode.WebviewPanel | undefined {
+  if (lastActivePreviewPanel && activePreviewDocuments.has(lastActivePreviewPanel)) {
+    return lastActivePreviewPanel;
+  }
+
+  for (const panel of activePreviewPanels) {
+    if (activePreviewDocuments.has(panel)) {
+      return panel;
+    }
+  }
+
+  return undefined;
 }
 
 async function addPresetFromWebview(
@@ -398,7 +470,11 @@ async function renormalizeFromWebview(
   }
 
   const doc = renormalizeDocument(state.doc, targetOhms, selectedPorts);
-  const model = buildPreviewModel(doc, state.fileLabel);
+  const overlays = state.overlays.map((item) => ({
+    ...item,
+    doc: renormalizeDocument(item.doc, targetOhms, selectedPorts)
+  }));
+  const model = buildPreviewModelWithOverlays(doc, state.fileLabel, overlays);
   await panel.webview.postMessage({
     type: "renormalizedPreview",
     effectiveReferenceOhms: doc.referenceOhms,
@@ -430,7 +506,7 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
     const text = new TextDecoder("utf-8").decode(bytes);
     const doc = parseTouchstone(text, basename(uri), TOUCHSTONE_PARSE_OPTIONS);
     const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
-    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false), uri });
+    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false), uri, overlays: [] });
     panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
   } catch (error) {
     activePreviewDocuments.delete(panel);
@@ -451,9 +527,6 @@ function renderPreviewHtml(
   const traceSelector = renderTraceSelector(model.series, defaultPreset);
   const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
-  const sidePanel = traceSelector
-    ? `<aside class="side-panel" aria-label="Preview controls">${traceSelector}</aside>`
-    : "";
 
   return htmlShell(
     webview,
@@ -471,13 +544,11 @@ function renderPreviewHtml(
     </header>
     ${controls}
     ${warnings}
-    <section class="preview-grid">
-      <main class="plot-column">
-        ${chart}
-        ${metricsTable}
-      </main>
-      ${sidePanel}
-    </section>
+    <main class="plot-column">
+      ${chart}
+      ${metricsTable}
+      ${traceSelector}
+    </main>
   `,
     script
   );
@@ -525,13 +596,19 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
     ])
   );
 
-  if (portCount <= 2 || selectableSeries.length <= 3) {
+  if (portCount === 0 || selectableSeries.length === 0) {
     return "";
   }
 
-  const bySelector = new Map<string, { item: ChartSeries; index: number }>();
+  const bySelector = new Map<string, { item: ChartSeries; indexes: number[] }>();
   for (const entry of selectableSeries) {
-    bySelector.set(`${entry.item.selector?.toPort}:${entry.item.selector?.fromPort}`, entry);
+    const key = traceKey(entry.item.selector);
+    const existing = bySelector.get(key);
+    if (existing) {
+      existing.indexes.push(entry.index);
+    } else {
+      bySelector.set(key, { item: entry.item, indexes: [entry.index] });
+    }
   }
 
   const selectedTraceKeys = selectedTraceKeysForPreset(selectableSeries, preset);
@@ -550,12 +627,12 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
       const key = `${toPort}:${fromPort}`;
       const checked = selectedTraceKeys
         ? selectedTraceKeys.has(key)
-        : entry.item.defaultVisible;
+        : entry.indexes.some((index) => series[index]?.defaultVisible);
       return `
         <label class="trace-toggle">
-          <input type="checkbox" data-trace-series="${entry.index}" data-trace-to="${toPort}" data-trace-from="${fromPort}" data-trace-default="${entry.item.defaultVisible ? "true" : "false"}" ${checked ? "checked" : ""} />
+          <input type="checkbox" data-trace-key="${key}" data-trace-to="${toPort}" data-trace-from="${fromPort}" data-trace-default="${checked ? "true" : "false"}" ${checked ? "checked" : ""} />
           <span class="trace-swatch ${escapeHtml(entry.item.cssClass)}"></span>
-          <span>${escapeHtml(entry.item.label)}</span>
+          <span>S${toPort}${fromPort}</span>
         </label>
       `;
     })
@@ -573,6 +650,10 @@ function renderTraceSelector(series: ChartSeries[], preset: PassbandPreset): str
       </fieldset>
     </section>
   `;
+}
+
+function traceKey(selector?: TraceSelector): string {
+  return selector ? `${selector.toPort}:${selector.fromPort}` : "";
 }
 
 function selectedTraceKeysForPreset(
@@ -702,13 +783,16 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
   const guides = [-3, -15, -20];
-  const renderSeriesLegend = series.length <= 4;
-  const legendItems = renderSeriesLegend ? series.map((item, index) => {
-    const legendX = chart.margin.left + 12 + index * 100;
+  const legendItems = series.map((item, index) => {
     const visibilityClass = item.defaultVisible ? "" : " series-hidden";
-    return `<g id="legend-${index}" class="legend-item${visibilityClass}"><line class="legend-line ${escapeHtml(item.cssClass)}" x1="${legendX}" y1="18" x2="${legendX + 30}" y2="18" /><text x="${legendX + 38}" y="22">${escapeHtml(item.label)}</text></g>`;
-  }).join("") : "";
-  const passbandLegendX = chart.margin.left + 24 + (renderSeriesLegend ? series.length * 100 : 0);
+    const key = traceKey(item.selector);
+    return `
+      <div id="legend-${index}" class="legend-item${visibilityClass}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}>
+        <span class="legend-line ${escapeHtml(item.cssClass)}"></span>
+        <span>${escapeHtml(item.label)}</span>
+      </div>
+    `;
+  }).join("");
 
   return `
     <section class="chart-wrap">
@@ -718,17 +802,23 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         ${xTicks.map((tick) => `<line class="grid" x1="${xCoord(tick, chart).toFixed(2)}" y1="${chart.margin.top}" x2="${xCoord(tick, chart).toFixed(2)}" y2="${chart.margin.top + chart.plotHeight}" />`).join("")}
         ${yTicks.map((tick) => `<line class="grid" x1="${chart.margin.left}" y1="${yCoord(tick, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(tick, chart).toFixed(2)}" />`).join("")}
         ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
-        ${series.map((item, index) => `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" points="${linePoints(item.rows, chart)}" />`).join("")}
+        ${series.map((item, index) => {
+          const key = traceKey(item.selector);
+          return `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""} points="${linePoints(item.rows, chart)}" />`;
+        }).join("")}
         <rect class="axis" x="${chart.margin.left}" y="${chart.margin.top}" width="${chart.plotWidth}" height="${chart.plotHeight}" />
         ${xTicks.map((tick) => `<text class="tick" x="${xCoord(tick, chart).toFixed(2)}" y="${chart.height - 28}" text-anchor="middle">${tick}</text>`).join("")}
         ${yTicks.map((tick) => `<text class="tick" x="${chart.margin.left - 12}" y="${(yCoord(tick, chart) + 4).toFixed(2)}" text-anchor="end">${tick}</text>`).join("")}
         <text class="axis-label" x="${chart.margin.left + chart.plotWidth / 2}" y="${chart.height - 8}" text-anchor="middle">Frequency, GHz</text>
         <text class="axis-label" x="18" y="${chart.margin.top + chart.plotHeight / 2}" text-anchor="middle" transform="rotate(-90 18 ${chart.margin.top + chart.plotHeight / 2})">dB</text>
-        <g class="legend">
-          ${legendItems}
-          <rect class="legend-passband" x="${passbandLegendX}" y="9" width="28" height="16" /><text id="legend-passband-label" x="${passbandLegendX + 36}" y="22">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</text>
-        </g>
       </svg>
+      <div class="chart-legend" aria-label="Plot legend">
+        ${legendItems}
+        <div class="legend-item passband-legend-item">
+          <span class="legend-passband"></span>
+          <span id="legend-passband-label">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</span>
+        </div>
+      </div>
     </section>
   `;
 }
@@ -850,7 +940,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
-    const traceInputs = Array.from(document.querySelectorAll("[data-trace-series]"));
+    const traceInputs = Array.from(document.querySelectorAll("[data-trace-key]"));
+    const seriesTraceItems = Array.from(document.querySelectorAll("[data-series-trace-key]"));
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
     const targetOhmsInputs = Array.from(document.querySelectorAll("[data-z0-target]"));
     const effectiveZ0 = document.getElementById("effective-z0");
@@ -1015,18 +1106,15 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function updateTraceVisibility() {
       for (const input of traceInputs) {
-        const index = Number(input.dataset.traceSeries);
-        if (!Number.isInteger(index)) {
+        const key = input.dataset.traceKey;
+        if (!key) {
           continue;
         }
         const hidden = !input.checked;
-        const curve = document.getElementById("series-" + index);
-        const legend = document.getElementById("legend-" + index);
-        if (curve) {
-          curve.classList.toggle("series-hidden", hidden);
-        }
-        if (legend) {
-          legend.classList.toggle("series-hidden", hidden);
+        for (const item of seriesTraceItems) {
+          if (item.dataset.seriesTraceKey === key) {
+            item.classList.toggle("series-hidden", hidden);
+          }
         }
       }
     }
@@ -1483,7 +1571,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .preview-header,
     .controls,
     .warnings,
-    .preview-grid {
+    .plot-column {
       max-width: 1280px;
     }
     .preview-header {
@@ -1525,6 +1613,8 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       flex-wrap: wrap;
       gap: 10px;
       align-items: end;
+      width: max-content;
+      max-width: 100%;
       margin: 0 0 12px;
       padding: 12px;
       background: var(--surface);
@@ -1572,9 +1662,10 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       color: var(--warning-fg);
       min-height: 20px;
       align-self: center;
-      flex: 1 1 220px;
+      flex: 0 1 260px;
       font-size: 12px;
     }
+    #passband-status:empty { display: none; }
     .warnings {
       margin: 0 0 12px;
       padding: 9px 11px;
@@ -1586,18 +1677,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     }
     .warnings p { margin: 0; }
     .warnings p + p { margin-top: 4px; }
-    .preview-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-      gap: 12px;
-      align-items: start;
-    }
     .plot-column { min-width: 0; }
-    .side-panel {
-      display: grid;
-      gap: 12px;
-      min-width: 0;
-    }
     .trace-controls,
     .metrics,
     .chart-wrap {
@@ -1605,13 +1685,14 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       border: 1px solid var(--border);
       border-radius: 8px;
     }
-    .trace-controls { padding: 12px; }
+    .trace-controls { margin-top: 12px; padding: 12px; }
     .z0-card {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: auto auto;
       gap: 10px 14px;
       align-items: end;
-      min-width: min(100%, 620px);
+      width: max-content;
+      max-width: 100%;
     }
     .trace-controls fieldset,
     .z0-ports { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -1663,8 +1744,8 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .trace-toggle input { width: auto; margin: 0; padding: 0; }
     .trace-swatch { width: 15px; height: 3px; border-radius: 999px; background: var(--trace-color, var(--vscode-foreground)); }
     .port-target-row {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       margin-top: 10px;
     }
@@ -1673,6 +1754,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       grid-template-columns: auto minmax(64px, 1fr);
       align-items: center;
       gap: 7px;
+      width: 132px;
       min-height: 35px;
       padding: 5px 7px;
       color: var(--vscode-foreground);
@@ -1691,7 +1773,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       font-size: 12px;
       min-width: 136px;
     }
-    .series-hidden { display: none; }
+    .series-hidden { display: none !important; }
     .preset-dropdown { position: relative; }
     .preset-menu-button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border-color: var(--vscode-panel-border); }
     .preset-menu-button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground)); }
@@ -1713,12 +1795,41 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .chart-wrap { overflow: auto; padding: 12px; }
     svg { display: block; width: 100%; min-width: 760px; height: auto; }
     .chart-bg { fill: var(--vscode-editor-background); }
-    .passband, .legend-passband { fill: var(--accent); opacity: 0.14; }
+    .passband { fill: var(--accent); opacity: 0.14; }
     .grid { stroke: var(--vscode-editorIndentGuide-background, var(--border)); stroke-width: 1; opacity: 0.75; }
     .axis { fill: none; stroke: var(--vscode-foreground); stroke-width: 1.2; opacity: 0.82; }
     .guide { stroke: var(--vscode-descriptionForeground); stroke-width: 1; stroke-dasharray: 5 5; }
-    .guide-label, .tick, .axis-label, .legend text { fill: var(--vscode-descriptionForeground); font-size: 12px; }
-    .curve, .legend-line { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+    .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
+    .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+    .chart-legend {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+      align-items: center;
+      margin: 10px 0 0 64px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .legend-line {
+      width: 32px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--trace-color, var(--vscode-foreground));
+    }
+    .legend-passband {
+      width: 32px;
+      height: 14px;
+      border-radius: 2px;
+      background: var(--accent);
+      opacity: 0.14;
+    }
     .s11 { stroke: #ef4444; }
     .s21 { stroke: #22c55e; }
     .s22 { stroke: #38bdf8; }
@@ -1745,6 +1856,14 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .overlay-5 { stroke: #eab308; }
     .overlay-6 { stroke: #14b8a6; }
     .overlay-7 { stroke: #f472b6; }
+    .overlay-line { opacity: 0.85; stroke-width: 1.9; }
+    .overlay-file-1 { stroke-dasharray: 7 4; }
+    .overlay-file-2 { stroke-dasharray: 2 4; }
+    .overlay-file-3 { stroke-dasharray: 10 4 2 4; }
+    .overlay-file-4 { stroke-dasharray: 5 3; }
+    .overlay-file-5 { stroke-dasharray: 2 2; }
+    .overlay-file-6 { stroke-dasharray: 12 4; }
+    .overlay-file-7 { stroke-dasharray: 4 6; }
     .metrics { margin-top: 12px; padding: 14px; }
     table { border-collapse: collapse; min-width: 540px; }
     th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
@@ -1753,12 +1872,10 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; }
     .error { border: 1px solid var(--vscode-inputValidation-errorBorder); padding: 12px; background: var(--vscode-inputValidation-errorBackground); }
     @media (max-width: 1080px) {
-      .preview-grid { grid-template-columns: 1fr; }
-      .side-panel { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
       .preview-header { display: grid; }
       .header-summary { justify-content: flex-start; }
       .z0-card { grid-template-columns: 1fr; width: 100%; }
-      .port-target-row { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+      .chart-legend { margin-left: 0; }
     }
   </style>
 </head>
