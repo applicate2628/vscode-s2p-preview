@@ -26,7 +26,7 @@ npm run package
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.2.vsix
+code --install-extension .\vscode-s2p-preview-0.0.3.vsix
 ```
 
 ## Use
