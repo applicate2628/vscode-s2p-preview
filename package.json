@@ -2,7 +2,7 @@
   "name": "vscode-s2p-preview",
   "displayName": "S2P Preview",
   "description": "Touchstone S-parameter preview for RF simulation files.",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "applicate2628",
   "license": "MPL-2.0",
   "repository": {
