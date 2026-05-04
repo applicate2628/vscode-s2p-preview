@@ -14,11 +14,13 @@ import {
   buildOverlayPreviewModel,
   buildPreviewModel
 } from "./previewModel";
+import { broadcastSettingsUpdated } from "./settingsSync";
 import { S2pRow, parseTouchstone } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 const OVERLAY_SELECTION_ERROR = "S2P Preview: select one or more Touchstone files first.";
 const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
+const activePreviewPanels = new Set<vscode.WebviewPanel>();
 
 interface PassbandSettings {
   presets: PassbandPreset[];
@@ -166,6 +168,8 @@ function isTouchstoneUri(uri: vscode.Uri): boolean {
 }
 
 function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
+  activePreviewPanels.add(panel);
+
   const disposable = panel.webview.onDidReceiveMessage(async (message: WebviewMessage) => {
     try {
       switch (message.type) {
@@ -186,7 +190,10 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
     }
   });
 
-  panel.onDidDispose(() => disposable.dispose());
+  panel.onDidDispose(() => {
+    disposable.dispose();
+    activePreviewPanels.delete(panel);
+  });
 }
 
 async function addPresetFromWebview(panel: vscode.WebviewPanel, startGHz: number, stopGHz: number): Promise<void> {
@@ -255,7 +262,7 @@ async function setDefaultPresetFromWebview(panel: vscode.WebviewPanel, label: st
   }
 
   await updateConfigurationValue("defaultPassbandPreset", label);
-  await panel.webview.postMessage({ type: "settingsUpdated", settings: getPassbandSettings() });
+  await broadcastPassbandSettings();
 }
 
 async function updatePassbandSettings(
@@ -266,7 +273,11 @@ async function updatePassbandSettings(
 ): Promise<void> {
   await updateConfigurationValue("passbandPresets", presets);
   await updateConfigurationValue("defaultPassbandPreset", defaultPresetLabel);
-  await panel.webview.postMessage({ type: "settingsUpdated", settings: getPassbandSettings(), status });
+  await broadcastPassbandSettings(panel, status);
+}
+
+async function broadcastPassbandSettings(statusPanel?: vscode.WebviewPanel, status?: string): Promise<void> {
+  await broadcastSettingsUpdated(activePreviewPanels, getPassbandSettings(), statusPanel, status);
 }
 
 async function updateConfigurationValue<T>(key: string, value: T): Promise<void> {
