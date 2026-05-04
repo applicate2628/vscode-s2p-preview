@@ -1,6 +1,7 @@
 src/**
 out/__tests__/**
 scripts/**
+docs/**
 tsconfig.json
 .gitignore
 *.vsix

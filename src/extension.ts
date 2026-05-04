@@ -7,7 +7,13 @@ import {
   createAutoPassband,
   normalizeDefaultPassbandLabel
 } from "./passband";
-import { S2pRow, parseTouchstone, toS2pRows } from "./touchstone";
+import {
+  ChartPoint,
+  ChartSeries,
+  PreviewModel,
+  buildPreviewModel
+} from "./previewModel";
+import { S2pRow, parseTouchstone } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 
@@ -26,7 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("s2pPreview.open", async (uri?: vscode.Uri) => {
       const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
       if (!targetUri) {
-        vscode.window.showErrorMessage("S2P Preview: open or select a .s2p file first.");
+        vscode.window.showErrorMessage("S2P Preview: open or select a Touchstone S-parameter file first.");
         return;
       }
 
@@ -211,8 +217,8 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
     const bytes = await vscode.workspace.fs.readFile(uri);
     const text = new TextDecoder("utf-8").decode(bytes);
     const doc = parseTouchstone(text, basename(uri));
-    const rows = toS2pRows(doc);
-    panel.webview.html = renderPreviewHtml(panel.webview, uri, rows, getPassbandSettings());
+    const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
+    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings());
   } catch (error) {
     panel.webview.html = renderErrorHtml(panel.webview, uri, error);
   }
@@ -220,23 +226,21 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
 
 function renderPreviewHtml(
   webview: vscode.Webview,
-  uri: vscode.Uri,
-  rows: S2pRow[],
+  model: PreviewModel,
   settings: PassbandSettings
 ): string {
-  const defaultPreset = resolveInitialPassband(rows, settings);
-  const fileLabel = escapeHtml(vscode.workspace.asRelativePath(uri, false));
-  const chart = renderChart(rows, defaultPreset);
-  const metricsTable = renderMetrics(defaultPreset);
+  const defaultPreset = resolveInitialPassband(model, settings);
+  const chart = renderChart(model.series, defaultPreset);
+  const metricsTable = renderMetrics(defaultPreset, model.metricRows);
   const controls = renderControls(defaultPreset);
-  const script = renderClientScript(rows, settings);
+  const script = renderClientScript(model, settings);
 
   return htmlShell(
     webview,
     `
     <header>
-      <h1>S2P Preview</h1>
-      <p class="file">${fileLabel}</p>
+      <h1>${escapeHtml(model.title)}</h1>
+      <p class="file">${escapeHtml(model.fileLabel)}</p>
     </header>
     ${controls}
     ${chart}
@@ -287,15 +291,72 @@ function renderControls(defaultPreset: PassbandPreset): string {
   `;
 }
 
-function renderChart(rows: S2pRow[], defaultPreset: PassbandPreset): string {
+interface ChartGeometry {
+  width: number;
+  height: number;
+  margin: { left: number; right: number; top: number; bottom: number };
+  plotWidth: number;
+  plotHeight: number;
+  minFreq: number;
+  maxFreq: number;
+  displayMinFreq: number;
+  displayMaxFreq: number;
+  yMin: number;
+  yMax: number;
+}
+
+function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): string {
+  const chart = chartGeometry(series);
+  const xTicks = range(Math.ceil(chart.minFreq), Math.floor(chart.maxFreq), 1);
+  const yTicks = range(Math.ceil(chart.yMin / 10) * 10, 0, 10);
+  const visibleStart = Math.max(defaultPreset.startGHz, chart.minFreq);
+  const visibleStop = Math.min(defaultPreset.stopGHz, chart.maxFreq);
+  const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
+  const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
+  const guides = [-3, -15, -20];
+  const legendItems = series.map((item, index) => {
+    const legendX = chart.margin.left + 12 + index * 100;
+    return `<line class="legend-line ${escapeHtml(item.cssClass)}" x1="${legendX}" y1="18" x2="${legendX + 30}" y2="18" /><text x="${legendX + 38}" y="22">${escapeHtml(item.label)}</text>`;
+  }).join("");
+  const passbandLegendX = chart.margin.left + 24 + series.length * 100;
+
+  return `
+    <section class="chart-wrap">
+      <svg viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="S-parameter plot">
+        <rect class="chart-bg" x="0" y="0" width="${chart.width}" height="${chart.height}" />
+        <rect id="passband-rect" class="passband" x="${passbandX.toFixed(2)}" y="${chart.margin.top}" width="${passbandWidth.toFixed(2)}" height="${chart.plotHeight}" />
+        ${xTicks.map((tick) => `<line class="grid" x1="${xCoord(tick, chart).toFixed(2)}" y1="${chart.margin.top}" x2="${xCoord(tick, chart).toFixed(2)}" y2="${chart.margin.top + chart.plotHeight}" />`).join("")}
+        ${yTicks.map((tick) => `<line class="grid" x1="${chart.margin.left}" y1="${yCoord(tick, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(tick, chart).toFixed(2)}" />`).join("")}
+        ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
+        ${series.map((item) => `<polyline class="curve ${escapeHtml(item.cssClass)}" points="${linePoints(item.rows, chart)}" />`).join("")}
+        <rect class="axis" x="${chart.margin.left}" y="${chart.margin.top}" width="${chart.plotWidth}" height="${chart.plotHeight}" />
+        ${xTicks.map((tick) => `<text class="tick" x="${xCoord(tick, chart).toFixed(2)}" y="${chart.height - 28}" text-anchor="middle">${tick}</text>`).join("")}
+        ${yTicks.map((tick) => `<text class="tick" x="${chart.margin.left - 12}" y="${(yCoord(tick, chart) + 4).toFixed(2)}" text-anchor="end">${tick}</text>`).join("")}
+        <text class="axis-label" x="${chart.margin.left + chart.plotWidth / 2}" y="${chart.height - 8}" text-anchor="middle">Frequency, GHz</text>
+        <text class="axis-label" x="18" y="${chart.margin.top + chart.plotHeight / 2}" text-anchor="middle" transform="rotate(-90 18 ${chart.margin.top + chart.plotHeight / 2})">dB</text>
+        <g class="legend">
+          ${legendItems}
+          <rect class="legend-passband" x="${passbandLegendX}" y="9" width="28" height="16" /><text id="legend-passband-label" x="${passbandLegendX + 36}" y="22">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</text>
+        </g>
+      </svg>
+    </section>
+  `;
+}
+
+function linePoints(rows: ChartPoint[], chart: ChartGeometry): string {
+  return rows.map((row) => `${xCoord(row.freqGHz, chart).toFixed(2)},${yCoord(row.db, chart).toFixed(2)}`).join(" ");
+}
+
+function chartGeometry(series: ChartSeries[]): ChartGeometry {
   const width = 980;
   const height = 520;
   const margin = { left: 64, right: 24, top: 30, bottom: 54 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const minFreq = Math.min(...rows.map((row) => row.freqGHz));
-  const maxFreq = Math.max(...rows.map((row) => row.freqGHz));
-  const allDb = rows.flatMap((row) => [row.s11db, row.s21db, row.s22db]);
+  const points = allChartPoints(series);
+  const minFreq = Math.min(...points.map((row) => row.freqGHz));
+  const maxFreq = Math.max(...points.map((row) => row.freqGHz));
+  const allDb = points.map((row) => row.db);
   // Clamp yMin to a reasonable display range. Very small magnitudes (numerical noise
   // or deep stopband nulls) can otherwise push yMin to -200 dB or lower, which
   // squashes the in-band curves to a sliver near the top of the chart.
@@ -303,49 +364,45 @@ function renderChart(rows: S2pRow[], defaultPreset: PassbandPreset): string {
   const yMinFloor = -80;
   const yMin = Math.max(yMinFloor, Math.min(-40, Math.floor(dataMin / 10) * 10));
   const yMax = 2;
+  const displayPadding = minFreq === maxFreq ? 0.5 : 0;
 
-  const x = (freqGHz: number): number => margin.left + ((freqGHz - minFreq) / (maxFreq - minFreq)) * plotWidth;
-  const y = (db: number): number => margin.top + ((yMax - db) / (yMax - yMin)) * plotHeight;
-  const line = (selector: keyof Pick<S2pRow, "s11db" | "s21db" | "s22db">): string =>
-    rows.map((row) => `${x(row.freqGHz).toFixed(2)},${y(row[selector]).toFixed(2)}`).join(" ");
-
-  const xTicks = range(Math.ceil(minFreq), Math.floor(maxFreq), 1);
-  const yTicks = range(Math.ceil(yMin / 10) * 10, 0, 10);
-  const passbandX = x(defaultPreset.startGHz);
-  const passbandWidth = x(defaultPreset.stopGHz) - passbandX;
-  const guides = [-3, -15, -20];
-
-  return `
-    <section class="chart-wrap">
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="S-parameter plot">
-        <rect class="chart-bg" x="0" y="0" width="${width}" height="${height}" />
-        <rect id="passband-rect" class="passband" x="${passbandX.toFixed(2)}" y="${margin.top}" width="${passbandWidth.toFixed(2)}" height="${plotHeight}" />
-        ${xTicks.map((tick) => `<line class="grid" x1="${x(tick).toFixed(2)}" y1="${margin.top}" x2="${x(tick).toFixed(2)}" y2="${margin.top + plotHeight}" />`).join("")}
-        ${yTicks.map((tick) => `<line class="grid" x1="${margin.left}" y1="${y(tick).toFixed(2)}" x2="${margin.left + plotWidth}" y2="${y(tick).toFixed(2)}" />`).join("")}
-        ${guides.map((guide) => `<line class="guide" x1="${margin.left}" y1="${y(guide).toFixed(2)}" x2="${margin.left + plotWidth}" y2="${y(guide).toFixed(2)}" /><text class="guide-label" x="${margin.left + plotWidth - 56}" y="${(y(guide) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
-        <polyline class="curve s11" points="${line("s11db")}" />
-        <polyline class="curve s21" points="${line("s21db")}" />
-        <polyline class="curve s22" points="${line("s22db")}" />
-        <rect class="axis" x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" />
-        ${xTicks.map((tick) => `<text class="tick" x="${x(tick).toFixed(2)}" y="${height - 28}" text-anchor="middle">${tick}</text>`).join("")}
-        ${yTicks.map((tick) => `<text class="tick" x="${margin.left - 12}" y="${(y(tick) + 4).toFixed(2)}" text-anchor="end">${tick}</text>`).join("")}
-        <text class="axis-label" x="${margin.left + plotWidth / 2}" y="${height - 8}" text-anchor="middle">Frequency, GHz</text>
-        <text class="axis-label" x="18" y="${margin.top + plotHeight / 2}" text-anchor="middle" transform="rotate(-90 18 ${margin.top + plotHeight / 2})">dB</text>
-        <g class="legend">
-          <line class="legend-line s11" x1="${margin.left + 12}" y1="18" x2="${margin.left + 42}" y2="18" /><text x="${margin.left + 50}" y="22">S11</text>
-          <line class="legend-line s21" x1="${margin.left + 112}" y1="18" x2="${margin.left + 142}" y2="18" /><text x="${margin.left + 150}" y="22">S21</text>
-          <line class="legend-line s22" x1="${margin.left + 212}" y1="18" x2="${margin.left + 242}" y2="18" /><text x="${margin.left + 250}" y="22">S22</text>
-          <rect class="legend-passband" x="${margin.left + 318}" y="9" width="28" height="16" /><text id="legend-passband-label" x="${margin.left + 354}" y="22">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</text>
-        </g>
-      </svg>
-    </section>
-  `;
+  return {
+    width,
+    height,
+    margin,
+    plotWidth,
+    plotHeight,
+    minFreq,
+    maxFreq,
+    displayMinFreq: minFreq - displayPadding,
+    displayMaxFreq: maxFreq + displayPadding,
+    yMin,
+    yMax
+  };
 }
 
-function renderMetrics(defaultPreset: PassbandPreset): string {
+function xCoord(freqGHz: number, chart: ChartGeometry): number {
+  return chart.margin.left + ((freqGHz - chart.displayMinFreq) / (chart.displayMaxFreq - chart.displayMinFreq)) * chart.plotWidth;
+}
+
+function yCoord(db: number, chart: ChartGeometry): number {
+  return chart.margin.top + ((chart.yMax - db) / (chart.yMax - chart.yMin)) * chart.plotHeight;
+}
+
+function renderMetrics(defaultPreset: PassbandPreset, metricRows?: S2pRow[]): string {
+  if (!metricRows) {
+    return `
+      <section class="metrics">
+        <h2 id="metrics-title">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))} Metrics</h2>
+        <p id="metric-status" class="metric-status">2-port passband metrics are not available for this file.</p>
+      </section>
+    `;
+  }
+
   return `
     <section class="metrics">
       <h2 id="metrics-title">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))} Metrics</h2>
+      <p id="metric-status" class="metric-status" aria-live="polite"></p>
       <table>
         <tbody>
           <tr><th>Best S21</th><td id="metric-best-s21">-</td></tr>
@@ -361,26 +418,28 @@ function renderMetrics(defaultPreset: PassbandPreset): string {
   `;
 }
 
-function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string {
-  const width = 980;
-  const margin = { left: 64, right: 24, top: 30, bottom: 54 };
-  const plotWidth = width - margin.left - margin.right;
-  const minFreq = Math.min(...rows.map((row) => row.freqGHz));
-  const maxFreq = Math.max(...rows.map((row) => row.freqGHz));
-  const rowsJson = jsonForScript(rows);
+function renderClientScript(model: PreviewModel, settings: PassbandSettings): string {
+  const chart = chartGeometry(model.series);
+  const metricRows = model.metricRows ?? [];
+  const metricRowsJson = jsonForScript(metricRows);
   const settingsJson = jsonForScript(settings);
+  const hasMetricRows = model.metricRows ? "true" : "false";
 
   return `
     const vscode = acquireVsCodeApi();
     const AUTO_PASSBAND_LABEL = ${jsonForScript(AUTO_PASSBAND_LABEL)};
-    const rows = ${rowsJson};
+    const METRICS_UNAVAILABLE = "2-port passband metrics are not available for this file.";
+    const metricRows = ${metricRowsJson};
+    const hasMetricRows = ${hasMetricRows};
     let settings = ${settingsJson};
     let activePresetLabel = settings.defaultPresetLabel;
     const chart = {
-      minFreq: ${minFreq},
-      maxFreq: ${maxFreq},
-      marginLeft: ${margin.left},
-      plotWidth: ${plotWidth}
+      minFreq: ${chart.minFreq},
+      maxFreq: ${chart.maxFreq},
+      displayMinFreq: ${chart.displayMinFreq},
+      displayMaxFreq: ${chart.displayMaxFreq},
+      marginLeft: ${chart.margin.left},
+      plotWidth: ${chart.plotWidth}
     };
 
     const startInput = document.getElementById("passband-start");
@@ -400,7 +459,7 @@ function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string 
     stopInput.max = String(chart.maxFreq);
 
     function x(freqGHz) {
-      return chart.marginLeft + ((freqGHz - chart.minFreq) / (chart.maxFreq - chart.minFreq)) * chart.plotWidth;
+      return chart.marginLeft + ((freqGHz - chart.displayMinFreq) / (chart.displayMaxFreq - chart.displayMinFreq)) * chart.plotWidth;
     }
 
     function formatRange(startGHz, stopGHz) {
@@ -408,7 +467,27 @@ function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string 
     }
 
     function setText(id, value) {
-      document.getElementById(id).textContent = value;
+      const target = document.getElementById(id);
+      if (target) {
+        target.textContent = value;
+      }
+    }
+
+    function setMetricStatus(message) {
+      setText("metric-status", message);
+    }
+
+    function clearMetricCells() {
+      if (!hasMetricRows) {
+        return;
+      }
+      setText("metric-best-s21", "-");
+      setText("metric-worst-s11", "-");
+      setText("metric-worst-s22", "-");
+      setText("metric-avg-s21", "-");
+      setText("metric-s21-bands", "-");
+      setText("metric-matched-bands", "-");
+      setText("metric-matched-coverage", "-");
     }
 
     function selectedPreset() {
@@ -447,7 +526,7 @@ function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string 
       let activeStart = null;
       let activeEnd = null;
 
-      for (const row of rows) {
+      for (const row of metricRows) {
         if (predicate(row)) {
           if (activeStart === null) {
             activeStart = row.freqGHz;
@@ -490,13 +569,8 @@ function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string 
     function clearMetrics(message) {
       status.textContent = message;
       passbandRect.setAttribute("width", "0");
-      setText("metric-best-s21", "-");
-      setText("metric-worst-s11", "-");
-      setText("metric-worst-s22", "-");
-      setText("metric-avg-s21", "-");
-      setText("metric-s21-bands", "-");
-      setText("metric-matched-bands", "-");
-      setText("metric-matched-coverage", "-");
+      setMetricStatus(message);
+      clearMetricCells();
     }
 
     function setPresetMenuOpen(open) {
@@ -640,8 +714,13 @@ function renderClientScript(rows: S2pRow[], settings: PassbandSettings): string 
       passbandRect.setAttribute("x", x(visibleStart).toFixed(2));
       passbandRect.setAttribute("width", (x(visibleStop) - x(visibleStart)).toFixed(2));
       status.textContent = "";
+      if (!hasMetricRows) {
+        setMetricStatus(METRICS_UNAVAILABLE);
+        return;
+      }
+      setMetricStatus("");
 
-      const passbandRows = rows.filter((row) => row.freqGHz >= startGHz && row.freqGHz <= stopGHz);
+      const passbandRows = metricRows.filter((row) => row.freqGHz >= startGHz && row.freqGHz <= stopGHz);
       if (passbandRows.length === 0) {
         clearMetrics("No sample points inside range.");
         return;
@@ -753,12 +832,17 @@ function roundGHz(value: number): number {
   return Math.round(value * 1000000) / 1000000;
 }
 
-function resolveInitialPassband(rows: S2pRow[], settings: PassbandSettings): PassbandPreset {
+function resolveInitialPassband(model: PreviewModel, settings: PassbandSettings): PassbandPreset {
+  const rows = allChartPoints(model.series);
   if (settings.defaultPresetLabel === AUTO_PASSBAND_LABEL) {
     return createAutoPassband(rows);
   }
 
   return settings.presets.find((preset) => preset.label === settings.defaultPresetLabel) ?? createAutoPassband(rows);
+}
+
+function allChartPoints(series: ChartSeries[]): ChartPoint[] {
+  return series.flatMap((item) => item.rows);
 }
 
 function formatRangeLabel(startGHz: number, stopGHz: number): string {
@@ -826,6 +910,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     table { border-collapse: collapse; min-width: 540px; }
     th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
     th { color: var(--vscode-descriptionForeground); font-weight: 600; }
+    .metric-status { color: var(--vscode-descriptionForeground); margin: 0 0 8px; }
     code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; }
     .error { border: 1px solid var(--vscode-inputValidation-errorBorder); padding: 12px; background: var(--vscode-inputValidation-errorBackground); }
   </style>

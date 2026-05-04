@@ -6,6 +6,7 @@ Preview Touchstone `S`-parameter files for RF simulation work directly in VS Cod
 
 - Supports Touchstone `S`-parameter files in `.s1p`, `.s2p`, `.s3p`, and `.s4p` form.
 - Supports Touchstone 1.x option-line files and Touchstone 2.0/2.1 keyword-block files with full matrix network data.
+- Renders dB charts for `.s1p`, `.s2p`, `.s3p`, and `.s4p` files.
 - Single-file passband metrics are available for 2-port files.
 - Plots `S11`, `S21`, and `S22` in dB when those traces exist.
 - Opens `.s1p`, `.s2p`, `.s3p`, and `.s4p` files as the default `S2P Preview` custom editor.
