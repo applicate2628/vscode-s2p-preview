@@ -356,6 +356,7 @@ function renderPreviewHtml(
   const chart = renderChart(model.series, defaultPreset);
   const metricsTable = renderMetrics(defaultPreset, model.metricRows);
   const controls = renderControls(defaultPreset, model.impedance);
+  const traceSelector = renderTraceSelector(model.series);
   const warnings = renderWarnings(model.warnings ?? []);
   const script = renderClientScript(model, settings);
 
@@ -367,6 +368,7 @@ function renderPreviewHtml(
       <p class="file">${escapeHtml(model.fileLabel)}</p>
     </header>
     ${controls}
+    ${traceSelector}
     ${warnings}
     ${chart}
     ${metricsTable}
@@ -401,6 +403,63 @@ function renderWarnings(warnings: string[]): string {
   return `
     <section class="warnings" aria-label="Touchstone warnings">
       ${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
+    </section>
+  `;
+}
+
+function renderTraceSelector(series: ChartSeries[]): string {
+  const selectableSeries = series
+    .map((item, index) => ({ item, index }))
+    .filter((entry) => entry.item.selector);
+  const portCount = Math.max(
+    0,
+    ...selectableSeries.flatMap((entry) => [
+      entry.item.selector?.toPort ?? 0,
+      entry.item.selector?.fromPort ?? 0
+    ])
+  );
+
+  if (portCount <= 2 || selectableSeries.length <= 3) {
+    return "";
+  }
+
+  const bySelector = new Map<string, { item: ChartSeries; index: number }>();
+  for (const entry of selectableSeries) {
+    bySelector.set(`${entry.item.selector?.toPort}:${entry.item.selector?.fromPort}`, entry);
+  }
+
+  const header = [
+    `<span class="trace-corner">to/from</span>`,
+    ...range(1, portCount, 1).map((port) => `<span class="trace-header">P${port}</span>`)
+  ].join("");
+  const rows = range(1, portCount, 1).map((toPort) => [
+    `<span class="trace-header">P${toPort}</span>`,
+    ...range(1, portCount, 1).map((fromPort) => {
+      const entry = bySelector.get(`${toPort}:${fromPort}`);
+      if (!entry) {
+        return `<span class="trace-empty"></span>`;
+      }
+
+      const checked = entry.item.defaultVisible ? "checked" : "";
+      return `
+        <label class="trace-toggle">
+          <input type="checkbox" data-trace-series="${entry.index}" ${checked} />
+          <span class="trace-swatch ${escapeHtml(entry.item.cssClass)}"></span>
+          <span>${escapeHtml(entry.item.label)}</span>
+        </label>
+      `;
+    })
+  ].join("")).join("");
+
+  return `
+    <section class="trace-controls" aria-label="Visible S-parameters">
+      <fieldset>
+        <legend>Visible S-parameters</legend>
+        <div class="trace-selector-grid" style="--trace-port-count: ${portCount}">
+          ${header}
+          ${rows}
+        </div>
+      </fieldset>
     </section>
   `;
 }
@@ -483,11 +542,13 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
   const guides = [-3, -15, -20];
-  const legendItems = series.map((item, index) => {
+  const renderSeriesLegend = series.length <= 4;
+  const legendItems = renderSeriesLegend ? series.map((item, index) => {
     const legendX = chart.margin.left + 12 + index * 100;
-    return `<line class="legend-line ${escapeHtml(item.cssClass)}" x1="${legendX}" y1="18" x2="${legendX + 30}" y2="18" /><text x="${legendX + 38}" y="22">${escapeHtml(item.label)}</text>`;
-  }).join("");
-  const passbandLegendX = chart.margin.left + 24 + series.length * 100;
+    const visibilityClass = item.defaultVisible ? "" : " series-hidden";
+    return `<g id="legend-${index}" class="legend-item${visibilityClass}"><line class="legend-line ${escapeHtml(item.cssClass)}" x1="${legendX}" y1="18" x2="${legendX + 30}" y2="18" /><text x="${legendX + 38}" y="22">${escapeHtml(item.label)}</text></g>`;
+  }).join("") : "";
+  const passbandLegendX = chart.margin.left + 24 + (renderSeriesLegend ? series.length * 100 : 0);
 
   return `
     <section class="chart-wrap">
@@ -497,7 +558,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         ${xTicks.map((tick) => `<line class="grid" x1="${xCoord(tick, chart).toFixed(2)}" y1="${chart.margin.top}" x2="${xCoord(tick, chart).toFixed(2)}" y2="${chart.margin.top + chart.plotHeight}" />`).join("")}
         ${yTicks.map((tick) => `<line class="grid" x1="${chart.margin.left}" y1="${yCoord(tick, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(tick, chart).toFixed(2)}" />`).join("")}
         ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
-        ${series.map((item, index) => `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}" points="${linePoints(item.rows, chart)}" />`).join("")}
+        ${series.map((item, index) => `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" points="${linePoints(item.rows, chart)}" />`).join("")}
         <rect class="axis" x="${chart.margin.left}" y="${chart.margin.top}" width="${chart.plotWidth}" height="${chart.plotHeight}" />
         ${xTicks.map((tick) => `<text class="tick" x="${xCoord(tick, chart).toFixed(2)}" y="${chart.height - 28}" text-anchor="middle">${tick}</text>`).join("")}
         ${yTicks.map((tick) => `<text class="tick" x="${chart.margin.left - 12}" y="${(yCoord(tick, chart) + 4).toFixed(2)}" text-anchor="end">${tick}</text>`).join("")}
@@ -628,6 +689,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const passbandRect = document.getElementById("passband-rect");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
+    const traceInputs = Array.from(document.querySelectorAll("[data-trace-series]"));
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
     const targetOhmsInputs = Array.from(document.querySelectorAll("[data-z0-target]"));
     const effectiveZ0 = document.getElementById("effective-z0");
@@ -788,6 +850,24 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         }
         curve.setAttribute("points", linePoints(rows));
       });
+    }
+
+    function updateTraceVisibility() {
+      for (const input of traceInputs) {
+        const index = Number(input.dataset.traceSeries);
+        if (!Number.isInteger(index)) {
+          continue;
+        }
+        const hidden = !input.checked;
+        const curve = document.getElementById("series-" + index);
+        const legend = document.getElementById("legend-" + index);
+        if (curve) {
+          curve.classList.toggle("series-hidden", hidden);
+        }
+        if (legend) {
+          legend.classList.toggle("series-hidden", hidden);
+        }
+      }
     }
 
     function linePoints(rows) {
@@ -984,6 +1064,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     startInput.addEventListener("input", updatePassband);
     stopInput.addEventListener("input", updatePassband);
+    for (const input of traceInputs) {
+      input.addEventListener("change", updateTraceVisibility);
+    }
     for (const input of targetOhmsInputs) {
       input.addEventListener("input", () => {
         const index = Number(input.dataset.z0Target);
@@ -1025,6 +1108,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     });
 
     renderPresetMenu();
+    updateTraceVisibility();
     updatePresetControls();
     updatePassband();
   `;
@@ -1143,6 +1227,16 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .warnings { margin: 8px 0 10px; padding: 7px 9px; color: var(--vscode-inputValidation-warningForeground, var(--vscode-editorWarning-foreground, var(--vscode-foreground))); background: var(--vscode-inputValidation-warningBackground, transparent); border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-border, var(--vscode-panel-border))); font-size: 12px; }
     .warnings p { margin: 0; }
     .warnings p + p { margin-top: 4px; }
+    .trace-controls { margin: 8px 0 10px; }
+    .trace-controls fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .trace-controls legend { margin: 0 0 5px; padding: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .trace-selector-grid { display: grid; grid-template-columns: 42px repeat(var(--trace-port-count), minmax(62px, 76px)); gap: 4px; align-items: stretch; overflow-x: auto; max-width: 100%; }
+    .trace-header, .trace-corner { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .trace-corner { justify-content: start; }
+    .trace-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 25px; padding: 2px 4px; color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-panel-border); font-size: 12px; white-space: nowrap; }
+    .trace-toggle input { width: auto; margin: 0; padding: 0; }
+    .trace-swatch { width: 14px; height: 3px; background: var(--trace-color, var(--vscode-foreground)); }
+    .series-hidden { display: none; }
     .preset-dropdown { position: relative; }
     .preset-menu-button { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border-color: var(--vscode-panel-border); }
     .preset-menu-button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground)); }
@@ -1173,6 +1267,21 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .s11 { stroke: #ef4444; }
     .s21 { stroke: #22c55e; }
     .s22 { stroke: #38bdf8; }
+    .s11 { --trace-color: #ef4444; }
+    .s21 { --trace-color: #22c55e; }
+    .s22 { --trace-color: #38bdf8; }
+    .trace-0 { stroke: #ef4444; --trace-color: #ef4444; }
+    .trace-1 { stroke: #f59e0b; --trace-color: #f59e0b; }
+    .trace-2 { stroke: #22c55e; --trace-color: #22c55e; }
+    .trace-3 { stroke: #38bdf8; --trace-color: #38bdf8; }
+    .trace-4 { stroke: #a78bfa; --trace-color: #a78bfa; }
+    .trace-5 { stroke: #f472b6; --trace-color: #f472b6; }
+    .trace-6 { stroke: #14b8a6; --trace-color: #14b8a6; }
+    .trace-7 { stroke: #eab308; --trace-color: #eab308; }
+    .trace-8 { stroke: #fb7185; --trace-color: #fb7185; }
+    .trace-9 { stroke: #60a5fa; --trace-color: #60a5fa; }
+    .trace-10 { stroke: #84cc16; --trace-color: #84cc16; }
+    .trace-11 { stroke: #c084fc; --trace-color: #c084fc; }
     .overlay-0 { stroke: #ef4444; }
     .overlay-1 { stroke: #22c55e; }
     .overlay-2 { stroke: #38bdf8; }

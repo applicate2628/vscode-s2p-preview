@@ -19,6 +19,7 @@ export interface ChartSeries {
   label: string;
   cssClass: string;
   rows: ChartPoint[];
+  defaultVisible: boolean;
   selector?: TraceSelector;
 }
 
@@ -48,18 +49,21 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
         {
           label: "S11",
           cssClass: "s11",
+          defaultVisible: true,
           selector: { toPort: 1, fromPort: 1 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s11db }))
         },
         {
           label: "S21",
           cssClass: "s21",
+          defaultVisible: true,
           selector: { toPort: 2, fromPort: 1 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s21db }))
         },
         {
           label: "S22",
           cssClass: "s22",
+          defaultVisible: true,
           selector: { toPort: 2, fromPort: 2 },
           rows: metricRows.map((row) => ({ freqGHz: row.freqGHz, db: row.s22db }))
         }
@@ -74,7 +78,7 @@ export function buildPreviewModel(doc: TouchstoneDocument, fileLabel: string): P
   return {
     title: `S${doc.ports}P Preview`,
     fileLabel,
-    series: selectors.map((selector) => traceSeries(doc, selector)),
+    series: selectors.map((selector, index) => traceSeries(doc, selector, index)),
     impedance: buildImpedanceModel(doc),
     warnings: doc.warnings.slice()
   };
@@ -96,6 +100,7 @@ export function buildOverlayPreviewModel(docs: Array<{ doc: TouchstoneDocument; 
     series: docs.map((item, index) => ({
       label: `${item.fileLabel} ${traceLabel}`,
       cssClass: `overlay-${index % 8}`,
+      defaultVisible: true,
       rows: traceDbRows(item.doc, selector)
     })),
     warnings: docs.flatMap((item) => item.doc.warnings.map((warning) => `${item.fileLabel}: ${warning}`))
@@ -103,18 +108,21 @@ export function buildOverlayPreviewModel(docs: Array<{ doc: TouchstoneDocument; 
 }
 
 function defaultSelectorsForPortCount(ports: number): TraceSelector[] {
-  const selectors: TraceSelector[] = [{ toPort: 1, fromPort: 1 }];
-  if (ports >= 2) {
-    selectors.push({ toPort: 2, fromPort: 1 }, { toPort: 2, fromPort: 2 });
+  const selectors: TraceSelector[] = [];
+  for (let toPort = 1; toPort <= ports; toPort += 1) {
+    for (let fromPort = 1; fromPort <= ports; fromPort += 1) {
+      selectors.push({ toPort, fromPort });
+    }
   }
   return selectors;
 }
 
-function traceSeries(doc: TouchstoneDocument, selector: TraceSelector): ChartSeries {
+function traceSeries(doc: TouchstoneDocument, selector: TraceSelector, index: number): ChartSeries {
   const label = traceSelectorLabel(selector);
   return {
     label,
-    cssClass: label.toLowerCase(),
+    cssClass: `trace-${index % 12}`,
+    defaultVisible: selector.fromPort === 1,
     selector,
     rows: traceDbRows(doc, selector)
   };

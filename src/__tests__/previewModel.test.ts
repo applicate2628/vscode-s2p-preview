@@ -63,8 +63,44 @@ test("builds an n-port preview model with default curves and no two-port metrics
 
   assert.equal(model.title, "S3P Preview");
   assert.equal(model.metricRows, undefined);
-  assert.deepEqual(model.series.map((series) => series.label), ["S11", "S21", "S22"]);
-  assert.equal(model.series[1].rows[0].db.toFixed(2), "-7.96");
+  assert.deepEqual(model.series.map((series) => series.label), [
+    "S11", "S12", "S13",
+    "S21", "S22", "S23",
+    "S31", "S32", "S33"
+  ]);
+  assert.deepEqual(
+    model.series.filter((series) => series.defaultVisible).map((series) => series.label),
+    ["S11", "S21", "S31"]
+  );
+  assert.equal(model.series.find((series) => series.label === "S21")?.rows[0].db.toFixed(2), "-7.96");
+});
+
+test("builds a four-port preview model with every Sij selector available", () => {
+  const doc = parseTouchstone(
+    [
+      "# GHZ S RI R 50",
+      "1",
+      "0.11 0 0.12 0 0.13 0 0.14 0",
+      "0.21 0 0.22 0 0.23 0 0.24 0",
+      "0.31 0 0.32 0 0.33 0 0.34 0",
+      "0.41 0 0.42 0 0.43 0 0.44 0"
+    ].join("\n"),
+    "sample.s4p"
+  );
+  const model = previewModel.buildPreviewModel(doc, "sample.s4p");
+
+  assert.equal(model.title, "S4P Preview");
+  assert.deepEqual(model.series.map((series) => series.label), [
+    "S11", "S12", "S13", "S14",
+    "S21", "S22", "S23", "S24",
+    "S31", "S32", "S33", "S34",
+    "S41", "S42", "S43", "S44"
+  ]);
+  assert.deepEqual(
+    model.series.filter((series) => series.defaultVisible).map((series) => series.label),
+    ["S11", "S21", "S31", "S41"]
+  );
+  assert.equal(model.series.find((series) => series.label === "S34")?.rows[0].db.toFixed(2), "-9.37");
 });
 
 test("builds an overlay preview model with S21 for two-port files", () => {
