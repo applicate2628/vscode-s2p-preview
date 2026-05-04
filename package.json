@@ -1,7 +1,7 @@
 {
   "name": "vscode-s2p-preview",
   "displayName": "S2P Preview",
-  "description": "MVP Touchstone 1.0 S2P preview for RF simulation files.",
+  "description": "Touchstone S-parameter preview for RF simulation files.",
   "version": "0.0.7",
   "publisher": "applicate2628",
   "license": "MPL-2.0",
@@ -86,7 +86,16 @@
         "displayName": "S2P Preview",
         "selector": [
           {
+            "filenamePattern": "*.s1p"
+          },
+          {
             "filenamePattern": "*.s2p"
+          },
+          {
+            "filenamePattern": "*.s3p"
+          },
+          {
+            "filenamePattern": "*.s4p"
           }
         ],
         "priority": "default"
@@ -102,14 +111,14 @@
       "editor/title/context": [
         {
           "command": "s2pPreview.open",
-          "when": "resourceExtname == .s2p",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
           "command": "s2pPreview.open",
-          "when": "resourceExtname == .s2p",
+          "when": "resourceExtname == .s1p || resourceExtname == .s2p || resourceExtname == .s3p || resourceExtname == .s4p",
           "group": "navigation"
         }
       ]

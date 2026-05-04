@@ -1,19 +1,20 @@
 # S2P Preview
 
-MVP VS Code extension for quick Touchstone 1.0 `.s2p` preview for RF simulation files.
+VS Code extension for quick Touchstone `S`-parameter preview for RF simulation files.
 
 ## Scope
 
-- Supports 2-port Touchstone 1.0 `.s2p` files with `# GHZ S <MA|DB|RI> R 50`.
-- Plots `S11`, `S21`, and `S22` in dB.
-- Opens `.s2p` files as the default `S2P Preview` custom editor.
+- Supports Touchstone `S`-parameter files in `.s1p`, `.s2p`, `.s3p`, and `.s4p` form.
+- Supports Touchstone 1.x option-line files and Touchstone 2.0/2.1 keyword-block files with full matrix network data.
+- Single-file passband metrics are available for 2-port files.
+- Plots `S11`, `S21`, and `S22` in dB when those traces exist.
+- Opens `.s1p`, `.s2p`, `.s3p`, and `.s4p` files as the default `S2P Preview` custom editor.
 - Opens in `Auto / Full file range` mode and highlights an editable passband.
 - Keeps `1-10 GHz` as the first configurable preset.
 - Adds and deletes passband presets from the preview.
 - Shows guide lines at `-3 dB`, `-15 dB`, and `-20 dB`.
-- Shows quick passband metrics for `S21` and `S11/S22`.
 
-Unsupported for MVP: Touchstone 2.0/2.1 keyword blocks, multi-file overlays, and PNG export.
+Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, PNG export, and generic high-port `.sNp` visualization.
 
 ## Build
 
@@ -49,7 +50,7 @@ code --install-extension .\vscode-s2p-preview-0.0.7.vsix
 
 ## Use
 
-Open a `.s2p` file. VS Code should use the `S2P Preview` custom editor by default.
+Open a `.s1p`, `.s2p`, `.s3p`, or `.s4p` file. VS Code should use the `S2P Preview` custom editor by default.
 
 To open the preview from an already-open text editor, run:
 
@@ -57,7 +58,7 @@ To open the preview from an already-open text editor, run:
 S2P: Preview Current File
 ```
 
-You can also right-click a `.s2p` file in Explorer and run the same command.
+You can also right-click a `.s1p`, `.s2p`, `.s3p`, or `.s4p` file in Explorer and run the same command.
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
 Use the preset dropdown to activate a preset, save the current range as a new preset, or delete a preset with the `x` at the end of its row.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
@@ -89,8 +90,15 @@ See `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyright and commercia
 
 - `MPL`: Mozilla Public License.
 - `Bash`: a Unix-style command shell available on Linux, macOS, WSL, and Git Bash.
+- `GHz`: gigahertz.
+- `mixed-mode`: a network-parameter representation that separates common-mode and differential-mode behavior.
+- `PNG`: Portable Network Graphics image format.
 - `PowerShell`: Microsoft's command shell used by the default release script on Windows.
-- `S2P`: Touchstone two-port S-parameter file format.
-- `Touchstone 1.0`: original option-line Touchstone syntax without Touchstone 2.0/2.1 keyword blocks.
+- `S2P`: Touchstone two-port `S`-parameter file format.
+- `S-parameter`: scattering parameter used to describe RF network behavior.
+- `SNP`: generic Touchstone N-port `S`-parameter file extension family such as `.s1p`, `.s2p`, `.s3p`, or `.s4p`.
+- `Touchstone 1.x`: option-line Touchstone syntax without Touchstone 2.x keyword blocks.
+- `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.
 - `VS Code`: Visual Studio Code.
 - `VSIX`: the packaged install format for VS Code extensions.
+- `Y`/`Z`/`G`/`H`: admittance, impedance, inverse hybrid, and hybrid network-parameter families.
