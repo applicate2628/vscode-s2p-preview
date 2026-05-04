@@ -1,6 +1,10 @@
-# S2P Preview
+# Touchstone S-Parameter Preview
 
-Preview Touchstone `S`-parameter files for RF simulation work directly in VS Code.
+Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF simulation work directly in VS Code.
+
+[GitHub repository](https://github.com/applicate2628/vscode-s2p-preview) | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview)
+
+![Touchstone S-parameter preview showing a four-port Sample4.s4p file](media/s4p-preview.png)
 
 ## Features
 
@@ -60,6 +64,10 @@ To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Edi
 
 Preset add/delete actions update user settings by default. If the workspace already defines `s2pPreview.passbandPresets` or `s2pPreview.defaultPassbandPreset`, those actions update the workspace settings instead. Old range-only presets remain valid; presets without `traces` or `renormalize` use the file's default trace visibility and reference impedance.
 
+## Privacy And Security
+
+The extension reads local Touchstone files through the VS Code extension API and renders the preview inside a VS Code webview. It does not upload files, make network requests, or collect telemetry.
+
 ## License
 
 Commercial licensing is available separately.
@@ -77,8 +85,11 @@ See the repository `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyrigh
 - `S-parameter`: scattering parameter used to describe RF network behavior.
 - `Sij`: one S-parameter trace where `i` is the destination/output port and `j` is the source/input port.
 - `SNP`: generic Touchstone N-port `S`-parameter file extension family such as `.s1p`, `.s2p`, `.s3p`, or `.s4p`.
+- `Telemetry`: automatic usage or diagnostic data collection; this extension does not collect it.
 - `Touchstone 1.x`: option-line Touchstone syntax without Touchstone 2.x keyword blocks.
 - `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.
 - `VS Code`: Visual Studio Code.
+- `VS Code extension API`: the local API surface VS Code exposes to extensions.
+- `webview`: an isolated VS Code panel used to render extension HTML content.
 - `Y`/`Z`/`G`/`H`: admittance, impedance, inverse hybrid, and hybrid network-parameter families.
 - `Z0`: reference impedance.

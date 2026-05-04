@@ -1,6 +1,10 @@
-# S2P Preview
+# Touchstone S-Parameter Preview
 
-VS Code extension for quick Touchstone `S`-parameter preview for RF simulation files.
+VS Code extension for quick Touchstone `S`-parameter preview of `.s1p`, `.s2p`, `.s3p`, and `.s4p` RF simulation files.
+
+[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview) | [GitHub repository](https://github.com/applicate2628/vscode-s2p-preview)
+
+![Touchstone S-parameter preview showing a four-port Sample4.s4p file](media/s4p-preview.png)
 
 ## Scope
 
@@ -94,6 +98,10 @@ Presets are stored in VS Code settings:
 
 Preset add/delete actions update user settings by default. If the workspace already defines `s2pPreview.passbandPresets` or `s2pPreview.defaultPassbandPreset`, those actions update the workspace settings instead. Old range-only presets remain valid; presets without `traces` or `renormalize` use the file's default trace visibility and reference impedance.
 
+## Privacy And Security
+
+The extension reads local Touchstone files through the VS Code extension API and renders the preview inside a VS Code webview. It does not upload files, make network requests, or collect telemetry.
+
 ## License
 
 Commercial licensing is available separately.
@@ -114,7 +122,10 @@ See `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyright and commercia
 - `SNP`: generic Touchstone N-port `S`-parameter file extension family such as `.s1p`, `.s2p`, `.s3p`, or `.s4p`.
 - `Touchstone 1.x`: option-line Touchstone syntax without Touchstone 2.x keyword blocks.
 - `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.
+- `Telemetry`: automatic usage or diagnostic data collection; this extension does not collect it.
 - `VS Code`: Visual Studio Code.
+- `VS Code extension API`: the local API surface VS Code exposes to extensions.
 - `VSIX`: the packaged install format for VS Code extensions.
+- `webview`: an isolated VS Code panel used to render extension HTML content.
 - `Y`/`Z`/`G`/`H`: admittance, impedance, inverse hybrid, and hybrid network-parameter families.
 - `Z0`: reference impedance.
