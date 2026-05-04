@@ -738,9 +738,9 @@ function renderControls(
           <div id="preset-menu" class="preset-menu" role="listbox" hidden></div>
         </div>
         ${canPickOverlay ? `<button id="overlay-picker-button" class="secondary-action" type="button">Overlay files...</button>` : ""}
+        ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
         <span id="passband-status" role="status" aria-live="polite"></span>
       </div>
-      ${impedance ? renderImpedanceControls(impedance, defaultPreset) : ""}
     </section>
   `;
 }
@@ -826,16 +826,22 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
   const guides = [-3, -15, -20];
   const hasOverlaySeries = series.some((item) => item.cssClass.includes("overlay-line"));
+  const legendGroups = hasOverlaySeries ? legendGroupsForSeries(series) : [];
   const showSeriesLegend = hasOverlaySeries || series.length <= 4;
   const legendItems = showSeriesLegend
     ? hasOverlaySeries
-      ? renderGroupedLegendItems(series)
+      ? renderGroupedLegendItems(legendGroups)
       : renderInlineLegendItems(series)
     : "";
   const legendModeClass = hasOverlaySeries ? "grouped" : "inline";
+  const legendStyle = hasOverlaySeries ? ` style="--legend-height: ${legendHeightForGroups(legendGroups)}px"` : "";
 
   return `
     <section class="chart-wrap">
+      <div class="chart-range-indicator" aria-label="Passband range">
+        <span class="legend-passband"></span>
+        <span id="legend-passband-label">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</span>
+      </div>
       <svg viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="S-parameter plot">
         <rect class="chart-bg" x="0" y="0" width="${chart.width}" height="${chart.height}" />
         <rect id="passband-rect" class="passband" x="${passbandX.toFixed(2)}" y="${chart.margin.top}" width="${passbandWidth.toFixed(2)}" height="${chart.plotHeight}" />
@@ -852,13 +858,9 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         <text class="axis-label" x="${chart.margin.left + chart.plotWidth / 2}" y="${chart.height - 8}" text-anchor="middle">Frequency, GHz</text>
         <text class="axis-label" x="18" y="${chart.margin.top + chart.plotHeight / 2}" text-anchor="middle" transform="rotate(-90 18 ${chart.margin.top + chart.plotHeight / 2})">dB</text>
       </svg>
-      <div class="chart-legend ${legendModeClass}" aria-label="Plot legend">
+      ${legendItems ? `<div class="chart-legend ${legendModeClass}"${legendStyle} aria-label="Plot legend">
         ${legendItems}
-        <div class="legend-item passband-legend-item">
-          <span class="legend-passband"></span>
-          <span id="legend-passband-label">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))}</span>
-        </div>
-      </div>
+      </div>` : ""}
     </section>
   `;
 }
@@ -867,7 +869,12 @@ function renderInlineLegendItems(series: ChartSeries[]): string {
   return series.map((item, index) => renderLegendItem(item, index, item.label)).join("");
 }
 
-function renderGroupedLegendItems(series: ChartSeries[]): string {
+interface LegendGroup {
+  label: string;
+  entries: Array<{ item: ChartSeries; index: number }>;
+}
+
+function legendGroupsForSeries(series: ChartSeries[]): LegendGroup[] {
   const groups: Array<{ label: string; entries: Array<{ item: ChartSeries; index: number }> }> = [];
   const byLabel = new Map<string, { label: string; entries: Array<{ item: ChartSeries; index: number }> }>();
 
@@ -882,6 +889,10 @@ function renderGroupedLegendItems(series: ChartSeries[]): string {
     group.entries.push(entry);
   }
 
+  return groups;
+}
+
+function renderGroupedLegendItems(groups: LegendGroup[]): string {
   return groups.map((group) => `
     <div class="legend-file-row">
       <span class="legend-file-label" title="${escapeHtml(group.label)}">${escapeHtml(group.label)}</span>
@@ -890,6 +901,14 @@ function renderGroupedLegendItems(series: ChartSeries[]): string {
       </div>
     </div>
   `).join("");
+}
+
+function legendHeightForGroups(groups: LegendGroup[]): number {
+  const baseHeight = 76;
+  const rowHeight = 22;
+  const verticalPadding = 24;
+  const maxHeight = 280;
+  return Math.min(maxHeight, Math.max(baseHeight, groups.length * rowHeight + verticalPadding));
 }
 
 function renderLegendItem(item: ChartSeries, index: number, label: string): string {
@@ -1906,6 +1925,14 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .preset-menu .preset-delete:disabled { color: var(--vscode-disabledForeground); cursor: default; }
     .preset-menu .preset-menu-add { width: 100%; margin-top: 4px; padding: 7px 8px; color: var(--vscode-dropdown-foreground, var(--vscode-foreground, #f3f3f3)); text-align: left; border-top: 1px solid var(--vscode-panel-border, #555); }
     .chart-wrap { overflow: auto; padding: 12px; }
+    .chart-range-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 8px 64px;
+      color: var(--muted);
+      font-size: 12px;
+    }
     svg { display: block; width: 100%; min-width: 760px; height: auto; }
     .chart-bg { fill: var(--vscode-editor-background); }
     .passband { fill: var(--accent); opacity: 0.14; }
@@ -1915,7 +1942,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground); font-size: 12px; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
-      height: 76px;
+      height: var(--legend-height, 76px);
       min-height: 38px;
       max-height: 280px;
       margin: 10px 0 0 64px;
@@ -2023,6 +2050,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       .preview-header { display: grid; }
       .header-summary { justify-content: flex-start; }
       .z0-card { grid-template-columns: 1fr; width: 100%; }
+      .chart-range-indicator { margin-left: 0; }
       .chart-legend { margin-left: 0; }
       .legend-file-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
     }
