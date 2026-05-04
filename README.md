@@ -42,7 +42,7 @@ Both scripts bump the package patch version, update the local VSIX filename in t
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.6.vsix
+code --install-extension .\vscode-s2p-preview-0.0.7.vsix
 ```
 
 ## Use
