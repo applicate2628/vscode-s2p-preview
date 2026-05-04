@@ -7,7 +7,7 @@ import {
   createAutoPassband,
   normalizeDefaultPassbandLabel
 } from "./passband";
-import { S2pRow, parseS2p } from "./touchstone";
+import { S2pRow, parseTouchstone, toS2pRows } from "./touchstone";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "s2pPreview.editor";
 
@@ -210,7 +210,8 @@ async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel)
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
     const text = new TextDecoder("utf-8").decode(bytes);
-    const rows = parseS2p(text);
+    const doc = parseTouchstone(text, basename(uri));
+    const rows = toS2pRows(doc);
     panel.webview.html = renderPreviewHtml(panel.webview, uri, rows, getPassbandSettings());
   } catch (error) {
     panel.webview.html = renderErrorHtml(panel.webview, uri, error);
@@ -257,7 +258,7 @@ function renderErrorHtml(webview: vscode.Webview, uri: vscode.Uri, error: unknow
     <section class="error">
       <h2>Cannot preview this file</h2>
       <p>${escapeHtml(message)}</p>
-      <p>MVP supports 2-port Touchstone files. Option line: <code># &lt;UNIT&gt; S &lt;MA|DB|RI&gt; R &lt;Z0&gt;</code> (UNIT = HZ/KHZ/MHZ/GHZ; format = MA, DB, or RI).</p>
+      <p>Current preview supports Touchstone S-parameter files in MA, DB, or RI format. Single-file metrics are available for 2-port files.</p>
     </section>
   `
   );

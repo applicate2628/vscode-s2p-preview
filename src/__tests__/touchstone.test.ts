@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   complexToDb,
   parseTouchstone,
+  toS2pRows,
   traceDbRows,
   traceSelectorLabel
 } from "../touchstone";
@@ -32,6 +33,16 @@ test("derives dB rows for an S-parameter trace", () => {
   assert.equal(rows[0].freqGHz, 1);
   assert.equal(rows[0].db.toFixed(2), "-0.92");
   assert.equal(traceSelectorLabel({ toPort: 2, fromPort: 1 }), "S21");
+});
+
+test("keeps legacy s2p dB row mapping from the complex model", () => {
+  const doc = parseTouchstone("# GHZ S MA R 50\n1 0.5 0 0.9 0 0.01 0 0.4 180", "sample.s2p");
+  const rows = toS2pRows(doc);
+
+  assert.equal(rows[0].s11db.toFixed(2), "-6.02");
+  assert.equal(rows[0].s21db.toFixed(2), "-0.92");
+  assert.equal(rows[0].s12db.toFixed(2), "-40.00");
+  assert.equal(rows[0].s22db.toFixed(2), "-7.96");
 });
 
 test("accumulates Touchstone 1.x 3-port RI data split across matrix rows", () => {
