@@ -10,8 +10,6 @@ VS Code extension for quick Touchstone `S`-parameter preview of `.s1p`, `.s2p`, 
 - Compare design variants with overlays, saved presets, and PNG export.
 - Keep RF simulation files local; no upload, telemetry, or external service is used.
 
-![Touchstone S-parameter preview showing a four-port Sample4.s4p file](media/s4p-preview.png)
-
 ![Touchstone S-parameter preview demo in VS Code showing passband presets, Sij trace selection, overlays, Z0 renormalization, and PNG export](media/s2p-preview-demo.gif)
 
 ## Scope
@@ -60,7 +58,7 @@ Both scripts bump the package patch version once for the batch, update the local
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.16.vsix
+code --install-extension .\vscode-s2p-preview-0.0.17.vsix
 ```
 
 ## Use

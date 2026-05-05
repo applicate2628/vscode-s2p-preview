@@ -10,8 +10,6 @@ Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF
 - Compare design variants with overlays, saved presets, and PNG export.
 - Keep RF simulation files local; no upload, telemetry, or external service is used.
 
-![Touchstone S-parameter preview showing a four-port Sample4.s4p file](media/s4p-preview.png)
-
 ![Touchstone S-parameter preview demo in VS Code showing passband presets, Sij trace selection, overlays, Z0 renormalization, and PNG export](media/s2p-preview-demo.gif)
 
 ## Features
