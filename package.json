@@ -1,8 +1,8 @@
 {
   "name": "vscode-s2p-preview",
   "displayName": "Touchstone S-Parameter Preview",
-  "description": "Preview S1P, S2P, S3P, and S4P Touchstone S-parameter files for RF simulation work.",
-  "version": "0.0.14",
+  "description": "Preview and compare S1P, S2P, S3P, and S4P Touchstone S-parameter files with overlays, presets, Z0 renormalization, and PNG export.",
+  "version": "0.0.15",
   "publisher": "applicate2628",
   "license": "MPL-2.0",
   "repository": {
@@ -13,20 +13,32 @@
   "bugs": {
     "url": "https://github.com/applicate2628/vscode-s2p-preview/issues"
   },
+  "galleryBanner": {
+    "color": "#1f4fbf",
+    "theme": "dark"
+  },
   "keywords": [
     "touchstone",
+    "touchstone viewer",
+    "touchstone 2.0",
+    "touchstone 2.1",
     "s-parameter",
     "s-parameters",
+    "s-parameter viewer",
     "s2p",
     "s1p",
     "s3p",
     "s4p",
     "snp",
     "rf",
+    "rf simulation",
     "microwave",
     "vna",
     "network-analyzer",
-    "visualization"
+    "visualization",
+    "overlay",
+    "png export",
+    "z0 renormalization"
   ],
   "icon": "media/icon.png",
   "engines": {

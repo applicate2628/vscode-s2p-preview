@@ -2121,11 +2121,13 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .trace-controls,
     .metrics,
     .chart-wrap {
+      min-width: 0;
+      max-width: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
     }
-    .trace-controls { margin-top: 12px; padding: 12px; }
+    .trace-controls { margin-top: 12px; padding: 12px; overflow-x: auto; }
     .z0-card {
       display: grid;
       grid-template-columns: auto auto;
@@ -2252,7 +2254,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       color: var(--muted);
       font-size: 12px;
     }
-    svg { display: block; width: 100%; min-width: 760px; height: auto; }
+    svg { display: block; width: 100%; min-width: 0; max-width: 100%; height: auto; }
     .chart-bg { fill: var(--vscode-editor-background, #ffffff); }
     .passband { fill: var(--accent); opacity: 0.14; }
     .grid { stroke: var(--vscode-editorIndentGuide-background, var(--border)); stroke-width: 1; opacity: 0.75; }
@@ -2350,7 +2352,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .overlay-file-5 { stroke-dasharray: 2 2; }
     .overlay-file-6 { stroke-dasharray: 12 4; }
     .overlay-file-7 { stroke-dasharray: 4 6; }
-    .metrics { margin-top: 12px; padding: 14px; }
+    .metrics { margin-top: 12px; padding: 14px; overflow-x: auto; }
     table { border-collapse: collapse; min-width: 540px; }
     th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; text-align: left; }
     th { color: var(--vscode-descriptionForeground); font-weight: 600; }

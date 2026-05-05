@@ -2,6 +2,7 @@ src/**
 out/__tests__/**
 scripts/**
 docs/**
+package-lock.json
 tsconfig.json
 .gitignore
 *.vsix
