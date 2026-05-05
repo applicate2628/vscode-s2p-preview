@@ -42,7 +42,7 @@ Saved presets are user-level settings, so ranges, visible traces, and Z0 normali
 To return to the active preset after manual edits, open the dropdown and select that preset again.
 Use the `Sij` checkbox matrix to choose visible traces for multi-port files.
 Use `Normalize Z0, Ohm` and the port checkboxes to renormalize selected ports; the initial values come from the Touchstone option line or `[Reference]` block.
-Use `Export PNG...` to save the current chart area, including the passband range indicator, plotted traces, and visible legend.
+Use `Export PNG...` to save the current chart area, including the passband range indicator, plotted traces, and visible legend. PNG export uses high-resolution rasterization for sharper lines and labels.
 
 To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Editor`.
 

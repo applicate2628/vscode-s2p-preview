@@ -22,6 +22,12 @@ import {
   buildPreviewModelWithOverlays
 } from "./previewModel";
 import type { PreviewImpedanceModel } from "./previewModel";
+import {
+  MAX_PNG_EXPORT_EDGE,
+  MAX_PNG_EXPORT_PIXELS,
+  MAX_PNG_EXPORT_SCALE,
+  MIN_PNG_EXPORT_SCALE
+} from "./pngExport";
 import { renormalizeDocument } from "./renormalize";
 import { broadcastSettingsUpdated } from "./settingsSync";
 import { parseTouchstone, traceSelectorLabel } from "./touchstone";
@@ -1094,6 +1100,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const impedance = ${impedanceJson};
     const exportSourceLabel = ${fileLabelJson};
     const hasMetricRows = ${hasMetricRows};
+    const MIN_PNG_EXPORT_SCALE = ${MIN_PNG_EXPORT_SCALE};
+    const MAX_PNG_EXPORT_SCALE = ${MAX_PNG_EXPORT_SCALE};
+    const MAX_PNG_EXPORT_EDGE = ${MAX_PNG_EXPORT_EDGE};
+    const MAX_PNG_EXPORT_PIXELS = ${MAX_PNG_EXPORT_PIXELS};
     let currentMetricRows = metricRows;
     let settings = ${settingsJson};
     let activePresetLabel = settings.defaultPresetLabel;
@@ -1155,19 +1165,17 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       try {
         const exportSvg = buildExportSvg();
         const image = await loadSvgImage(exportSvg.markup);
-        const scale = Math.max(2, Math.ceil(window.devicePixelRatio || 1));
         const canvas = document.createElement("canvas");
-        canvas.width = exportSvg.width * scale;
-        canvas.height = exportSvg.height * scale;
+        canvas.width = exportSvg.pixelWidth;
+        canvas.height = exportSvg.pixelHeight;
         const context = canvas.getContext("2d");
         if (!context) {
           throw new Error("Canvas rendering is not available.");
         }
 
-        context.scale(scale, scale);
         context.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
-        context.fillRect(0, 0, exportSvg.width, exportSvg.height);
-        context.drawImage(image, 0, 0, exportSvg.width, exportSvg.height);
+        context.fillRect(0, 0, exportSvg.pixelWidth, exportSvg.pixelHeight);
+        context.drawImage(image, 0, 0, exportSvg.pixelWidth, exportSvg.pixelHeight);
         vscode.postMessage({
           type: "exportPng",
           fileName: exportPngFileName(),
@@ -1209,6 +1217,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       const legendRows = exportLegendRows();
       const legend = buildLegendSvg(legendRows, topHeight + chartHeight + 18, chartWidth);
       const totalHeight = topHeight + chartHeight + legend.height + 28;
+      const rasterSize = pngExportRasterSize(chartWidth, totalHeight, window.devicePixelRatio || 1);
       const clone = chartSvg.cloneNode(true);
       inlineSvgStyles(chartSvg, clone);
 
@@ -1221,7 +1230,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       const rangeLabel = passbandLabel ? passbandLabel.textContent || "Passband" : "Passband";
 
       const markup =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="' + chartWidth + '" height="' + totalHeight + '" viewBox="0 0 ' + chartWidth + ' ' + totalHeight + '">' +
+        '<svg xmlns="http://www.w3.org/2000/svg" width="' + rasterSize.pixelWidth + '" height="' + rasterSize.pixelHeight + '" viewBox="0 0 ' + chartWidth + ' ' + totalHeight + '">' +
         '<rect x="0" y="0" width="' + chartWidth + '" height="' + totalHeight + '" fill="' + escapeXml(background) + '"/>' +
         '<rect x="64" y="8" width="32" height="14" rx="2" fill="' + escapeXml(passbandColor) + '"/>' +
         '<text x="108" y="20" fill="' + escapeXml(textColor) + '" font-family="' + escapeXml(fontFamily) + '" font-size="12">' + escapeXml(rangeLabel) + '</text>' +
@@ -1229,7 +1238,33 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         legend.markup +
         '</svg>';
 
-      return { markup, width: chartWidth, height: totalHeight };
+      return {
+        markup,
+        width: chartWidth,
+        height: totalHeight,
+        pixelWidth: rasterSize.pixelWidth,
+        pixelHeight: rasterSize.pixelHeight,
+        scale: rasterSize.scale
+      };
+    }
+
+    function pngExportRasterSize(logicalWidth, logicalHeight, devicePixelRatio) {
+      const safeWidth = finitePositiveOrFallback(logicalWidth, 1);
+      const safeHeight = finitePositiveOrFallback(logicalHeight, 1);
+      const safeDevicePixelRatio = finitePositiveOrFallback(devicePixelRatio, 1);
+      let scale = Math.min(MAX_PNG_EXPORT_SCALE, Math.max(MIN_PNG_EXPORT_SCALE, Math.ceil(safeDevicePixelRatio)));
+      scale = Math.min(scale, MAX_PNG_EXPORT_EDGE / Math.max(safeWidth, safeHeight));
+      scale = Math.min(scale, Math.sqrt(MAX_PNG_EXPORT_PIXELS / (safeWidth * safeHeight)));
+      scale = Math.max(1, Math.floor(scale * 100) / 100);
+      return {
+        scale,
+        pixelWidth: Math.max(1, Math.floor(safeWidth * scale)),
+        pixelHeight: Math.max(1, Math.floor(safeHeight * scale))
+      };
+    }
+
+    function finitePositiveOrFallback(value, fallback) {
+      return Number.isFinite(value) && value > 0 ? value : fallback;
     }
 
     function inlineSvgStyles(source, target) {
