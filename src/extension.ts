@@ -28,6 +28,11 @@ import {
   MAX_PNG_EXPORT_SCALE,
   MIN_PNG_EXPORT_SCALE
 } from "./pngExport";
+import {
+  normalizeAutoRefreshOnFileChange,
+  normalizePreviewRefreshDebounceMs,
+  previewFileWatchKeys
+} from "./previewFileWatch";
 import { renormalizeDocument } from "./renormalize";
 import { broadcastSettingsUpdated } from "./settingsSync";
 import { parseTouchstone, traceSelectorLabel } from "./touchstone";
@@ -39,6 +44,8 @@ const TOUCHSTONE_EXTENSIONS = new Set([".s1p", ".s2p", ".s3p", ".s4p"]);
 const TOUCHSTONE_PARSE_OPTIONS = { allowIncompleteFinalSample: true };
 const activePreviewPanels = new Set<vscode.WebviewPanel>();
 const activePreviewDocuments = new Map<vscode.WebviewPanel, PreviewDocumentState>();
+const activePreviewFileWatchers = new Map<vscode.WebviewPanel, vscode.Disposable[]>();
+const pendingPreviewRefreshes = new Map<vscode.WebviewPanel, ReturnType<typeof setTimeout>>();
 let lastActivePreviewPanel: vscode.WebviewPanel | undefined;
 
 interface PassbandSettings {
@@ -118,7 +125,15 @@ export function activate(context: vscode.ExtensionContext): void {
           retainContextWhenHidden: true
         }
       }
-    )
+    ),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration("s2pPreview.autoRefreshOnFileChange")
+        || event.affectsConfiguration("s2pPreview.autoRefreshDebounceMs")
+      ) {
+        refreshPreviewAutoRefreshWatchers();
+      }
+    })
   );
 }
 
@@ -259,20 +274,23 @@ async function applyOverlayUrisToPanel(panel: vscode.WebviewPanel, uris: vscode.
 
   state.overlays = await readTouchstoneDocuments(overlayUris);
   const model = buildPreviewModelWithOverlays(state.doc, state.fileLabel, state.overlays);
+  setPreviewDocumentState(panel, state);
   panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
 }
 
 async function readTouchstoneDocuments(uris: vscode.Uri[]): Promise<OverlayDocumentState[]> {
-  return Promise.all(uris.map(async (item) => {
-    const fileLabel = vscode.workspace.asRelativePath(item, false);
-    const bytes = await vscode.workspace.fs.readFile(item);
-    const text = new TextDecoder("utf-8").decode(bytes);
-    return {
-      doc: parseTouchstone(text, basename(item), TOUCHSTONE_PARSE_OPTIONS),
-      fileLabel,
-      uri: item
-    };
-  }));
+  return Promise.all(uris.map(readTouchstoneDocument));
+}
+
+async function readTouchstoneDocument(uri: vscode.Uri): Promise<OverlayDocumentState> {
+  const fileLabel = vscode.workspace.asRelativePath(uri, false);
+  const bytes = await vscode.workspace.fs.readFile(uri);
+  const text = new TextDecoder("utf-8").decode(bytes);
+  return {
+    doc: parseTouchstone(text, basename(uri), TOUCHSTONE_PARSE_OPTIONS),
+    fileLabel,
+    uri
+  };
 }
 
 function selectedTouchstoneUris(uri?: vscode.Uri, selectedUris?: vscode.Uri[]): vscode.Uri[] {
@@ -350,7 +368,7 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
   panel.onDidDispose(() => {
     disposable.dispose();
     activePreviewPanels.delete(panel);
-    activePreviewDocuments.delete(panel);
+    clearPreviewDocumentState(panel);
     if (lastActivePreviewPanel === panel) {
       lastActivePreviewPanel = activePreviewPanels.values().next().value;
     }
@@ -577,16 +595,130 @@ async function updateConfigurationValue<T>(key: string, value: T): Promise<void>
   await vscode.workspace.getConfiguration("s2pPreview").update(key, value, vscode.ConfigurationTarget.Global);
 }
 
-async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel): Promise<void> {
+function setPreviewDocumentState(panel: vscode.WebviewPanel, state: PreviewDocumentState): void {
+  activePreviewDocuments.set(panel, state);
+  updatePreviewFileWatchers(panel, state);
+}
+
+function clearPreviewDocumentState(panel: vscode.WebviewPanel): void {
+  activePreviewDocuments.delete(panel);
+  disposePreviewFileWatchers(panel);
+  clearPendingPreviewRefresh(panel);
+}
+
+function clearPendingPreviewRefresh(panel: vscode.WebviewPanel): void {
+  const pending = pendingPreviewRefreshes.get(panel);
+  if (pending) {
+    clearTimeout(pending);
+    pendingPreviewRefreshes.delete(panel);
+  }
+}
+
+function updatePreviewFileWatchers(panel: vscode.WebviewPanel, state: PreviewDocumentState): void {
+  disposePreviewFileWatchers(panel);
+  if (!previewAutoRefreshSettings().enabled) {
+    clearPendingPreviewRefresh(panel);
+    return;
+  }
+
+  const disposables = previewFileWatchUris(state).map((uri) => createPreviewFileWatcher(panel, uri));
+  activePreviewFileWatchers.set(panel, disposables);
+}
+
+function disposePreviewFileWatchers(panel: vscode.WebviewPanel): void {
+  const disposables = activePreviewFileWatchers.get(panel) ?? [];
+  for (const disposable of disposables) {
+    disposable.dispose();
+  }
+  activePreviewFileWatchers.delete(panel);
+}
+
+function refreshPreviewAutoRefreshWatchers(): void {
+  for (const [panel, state] of activePreviewDocuments) {
+    updatePreviewFileWatchers(panel, state);
+  }
+}
+
+function previewFileWatchUris(state: PreviewDocumentState): vscode.Uri[] {
+  const byKey = new Map<string, vscode.Uri>();
+  byKey.set(state.uri.toString(), state.uri);
+  for (const overlay of state.overlays) {
+    byKey.set(overlay.uri.toString(), overlay.uri);
+  }
+
+  return previewFileWatchKeys(
+    state.uri.toString(),
+    state.overlays.map((overlay) => overlay.uri.toString())
+  ).map((key) => byKey.get(key)).filter((uri): uri is vscode.Uri => uri !== undefined);
+}
+
+function createPreviewFileWatcher(panel: vscode.WebviewPanel, uri: vscode.Uri): vscode.Disposable {
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(dirnameUri(uri), basename(uri))
+  );
+  const refresh = () => schedulePreviewRefresh(panel);
+  const subscriptions = [
+    watcher.onDidChange(refresh),
+    watcher.onDidCreate(refresh),
+    watcher.onDidDelete(refresh),
+    watcher
+  ];
+
+  return vscode.Disposable.from(...subscriptions);
+}
+
+function schedulePreviewRefresh(panel: vscode.WebviewPanel): void {
+  const settings = previewAutoRefreshSettings();
+  if (!settings.enabled) {
+    return;
+  }
+
+  const pending = pendingPreviewRefreshes.get(panel);
+  if (pending) {
+    clearTimeout(pending);
+  }
+
+  pendingPreviewRefreshes.set(panel, setTimeout(() => {
+    pendingPreviewRefreshes.delete(panel);
+    void refreshPreviewPanelFromDisk(panel);
+  }, settings.debounceMs));
+}
+
+function previewAutoRefreshSettings(): { enabled: boolean; debounceMs: number } {
+  const config = vscode.workspace.getConfiguration("s2pPreview");
+  return {
+    enabled: normalizeAutoRefreshOnFileChange(config.get("autoRefreshOnFileChange")),
+    debounceMs: normalizePreviewRefreshDebounceMs(config.get("autoRefreshDebounceMs"))
+  };
+}
+
+async function refreshPreviewPanelFromDisk(panel: vscode.WebviewPanel): Promise<void> {
+  const previous = activePreviewDocuments.get(panel);
+  if (!previous) {
+    return;
+  }
+
   try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    const text = new TextDecoder("utf-8").decode(bytes);
-    const doc = parseTouchstone(text, basename(uri), TOUCHSTONE_PARSE_OPTIONS);
-    const model = buildPreviewModel(doc, vscode.workspace.asRelativePath(uri, false));
-    activePreviewDocuments.set(panel, { doc, fileLabel: vscode.workspace.asRelativePath(uri, false), uri, overlays: [] });
+    const source = await readTouchstoneDocument(previous.uri);
+    const overlayUris = previous.overlays.map((overlay) => overlay.uri);
+    const overlays = await readTouchstoneDocuments(overlayUris);
+    const nextState = { ...source, overlays };
+    const model = buildPreviewModelWithOverlays(nextState.doc, nextState.fileLabel, nextState.overlays);
+    setPreviewDocumentState(panel, nextState);
     panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
   } catch (error) {
-    activePreviewDocuments.delete(panel);
+    panel.webview.html = renderErrorHtml(panel.webview, previous.uri, error);
+  }
+}
+
+async function renderUriIntoWebview(uri: vscode.Uri, panel: vscode.WebviewPanel): Promise<void> {
+  try {
+    const state = await readTouchstoneDocument(uri);
+    const model = buildPreviewModel(state.doc, state.fileLabel);
+    setPreviewDocumentState(panel, { ...state, overlays: [] });
+    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
+  } catch (error) {
+    clearPreviewDocumentState(panel);
     panel.webview.html = renderErrorHtml(panel.webview, uri, error);
   }
 }
