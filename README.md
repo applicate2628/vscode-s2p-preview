@@ -2,7 +2,7 @@
 
 VS Code extension for quick Touchstone `S`-parameter preview of `.s1p`, `.s2p`, `.s3p`, and `.s4p` RF simulation files.
 
-[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview) | [GitHub repository](https://github.com/applicate2628/vscode-s2p-preview)
+[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview) | [Open VSX](https://open-vsx.org/extension/applicate2628/vscode-s2p-preview) | [GitHub repository](https://github.com/applicate2628/vscode-s2p-preview)
 
 ## Why Use It
 
@@ -58,7 +58,7 @@ Both scripts bump the package patch version once for the batch, update the local
 ## Install Local VSIX
 
 ```powershell
-code --install-extension .\vscode-s2p-preview-0.0.18.vsix
+code --install-extension .\vscode-s2p-preview-0.0.19.vsix
 ```
 
 ## Use
@@ -112,6 +112,10 @@ Preset add/delete actions update user settings by default. If the workspace alre
 
 The extension reads local Touchstone files through the VS Code extension API and renders the preview inside a VS Code webview. It does not upload files, make network requests, or collect telemetry.
 
+## Support The Project
+
+If Touchstone S-Parameter Preview helps your workflow, please star the GitHub repository or leave a rating on the marketplace where you installed it. This helps other VS Code users find the extension.
+
 ## License
 
 Commercial licensing is available separately.
@@ -126,11 +130,14 @@ See `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyright and commercia
 - `mixed-mode`: a network-parameter representation that separates common-mode and differential-mode behavior.
 - `PNG`: Portable Network Graphics image format.
 - `PowerShell`: Microsoft's command shell used by the default release script on Windows.
+- `Open VSX`: the open extension registry used by VS Code-compatible editors.
 - `overlay`: a preview mode that plots one selected S-parameter trace from multiple files on one chart.
+- `rating`: a user review or score on an extension marketplace.
 - `S2P`: Touchstone two-port `S`-parameter file format.
 - `S-parameter`: scattering parameter used to describe RF network behavior.
 - `Sij`: one S-parameter trace where `i` is the destination/output port and `j` is the source/input port.
 - `SNP`: generic Touchstone N-port `S`-parameter file extension family such as `.s1p`, `.s2p`, `.s3p`, or `.s4p`.
+- `star`: a GitHub repository star used as a lightweight public signal of user interest.
 - `Touchstone 1.x`: option-line Touchstone syntax without Touchstone 2.x keyword blocks.
 - `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.
 - `Telemetry`: automatic usage or diagnostic data collection; this extension does not collect it.

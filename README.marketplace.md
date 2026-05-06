@@ -2,7 +2,7 @@
 
 Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF simulation work directly in VS Code.
 
-[GitHub repository](https://github.com/applicate2628/vscode-s2p-preview) | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview)
+[GitHub repository](https://github.com/applicate2628/vscode-s2p-preview) | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=applicate2628.vscode-s2p-preview) | [Open VSX](https://open-vsx.org/extension/applicate2628/vscode-s2p-preview)
 
 ## Why Use It
 
@@ -78,6 +78,10 @@ Preset add/delete actions update user settings by default. If the workspace alre
 
 The extension reads local Touchstone files through the VS Code extension API and renders the preview inside a VS Code webview. It does not upload files, make network requests, or collect telemetry.
 
+## Support The Project
+
+If Touchstone S-Parameter Preview helps your workflow, please star the GitHub repository or leave a rating on the marketplace where you installed it. This helps other VS Code users find the extension.
+
 ## License
 
 Commercial licensing is available separately.
@@ -90,12 +94,15 @@ See the repository `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyrigh
 - `GHz`: gigahertz.
 - `mixed-mode`: a network-parameter representation that separates common-mode and differential-mode behavior.
 - `MPL`: Mozilla Public License.
+- `Open VSX`: the open extension registry used by VS Code-compatible editors.
 - `PNG`: Portable Network Graphics image format.
 - `overlay`: a preview mode that plots one selected S-parameter trace from multiple files on one chart.
+- `rating`: a user review or score on an extension marketplace.
 - `S2P`: Touchstone two-port `S`-parameter file format.
 - `S-parameter`: scattering parameter used to describe RF network behavior.
 - `Sij`: one S-parameter trace where `i` is the destination/output port and `j` is the source/input port.
 - `SNP`: generic Touchstone N-port `S`-parameter file extension family such as `.s1p`, `.s2p`, `.s3p`, or `.s4p`.
+- `star`: a GitHub repository star used as a lightweight public signal of user interest.
 - `Telemetry`: automatic usage or diagnostic data collection; this extension does not collect it.
 - `Touchstone 1.x`: option-line Touchstone syntax without Touchstone 2.x keyword blocks.
 - `Touchstone 2.x`: keyword-block Touchstone syntax for extended network data.

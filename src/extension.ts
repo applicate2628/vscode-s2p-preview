@@ -963,7 +963,7 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: Passb
             <input type="checkbox" data-z0-port="${index}" ${initial.selectedPorts[index] ? "checked" : ""} />
             <span>P${index + 1}</span>
           </label>
-          <input class="port-target-input" type="number" data-z0-target="${index}" aria-label="P${index + 1} target Z0 Ohm" value="${initial.targetOhms[index] ?? sourceOhms}" min="0.001" step="1" />
+          <input class="port-target-input" type="number" data-z0-target="${index}" aria-label="P${index + 1} target Z0 Ohm" value="${initial.targetOhms[index] ?? sourceOhms}" min="0" step="1" />
         </div>
       `).join("");
 
@@ -1273,6 +1273,95 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     startInput.max = String(chart.maxFreq);
     stopInput.min = String(chart.minFreq);
     stopInput.max = String(chart.maxFreq);
+    installNumberInputWheelGuard();
+
+    function installNumberInputWheelGuard() {
+      const numberInputs = Array.from(document.querySelectorAll("input[type=number]"));
+      for (const input of numberInputs) {
+        input.addEventListener("wheel", (event) => {
+          if (event.deltaY === 0) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+          input.focus({ preventScroll: true });
+          if (applyNumberInputWheelStep(input, event.deltaY < 0 ? 1 : -1)) {
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }, { passive: false });
+      }
+    }
+
+    function applyNumberInputWheelStep(input, direction) {
+      const current = Number(input.value);
+      const fallback = Number(input.getAttribute("value"));
+      const base = Number.isFinite(current)
+        ? current
+        : Number.isFinite(fallback)
+          ? fallback
+          : 0;
+      const step = numberInputWheelStep(input);
+      const min = finiteNumberInputAttribute(input, "min");
+      const max = finiteNumberInputAttribute(input, "max");
+      let next = direction > 0
+        ? Math.floor(base / step) * step + step
+        : Math.ceil(base / step) * step - step;
+
+      if (Number.isFinite(min)) {
+        next = Math.max(min, next);
+      }
+      if (Number.isFinite(max)) {
+        next = Math.min(max, next);
+      }
+
+      const value = formatNumberInputWheelValue(input, next);
+      if (value === input.value) {
+        return false;
+      }
+
+      input.value = value;
+      return true;
+    }
+
+    function numberInputWheelStep(input) {
+      const rawStep = input.getAttribute("step");
+      const parsed = Number(rawStep);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    }
+
+    function finiteNumberInputAttribute(input, name) {
+      const parsed = Number(input.getAttribute(name));
+      return Number.isFinite(parsed) ? parsed : Number.NaN;
+    }
+
+    function formatNumberInputWheelValue(input, value) {
+      const min = finiteNumberInputAttribute(input, "min");
+      const isAtMin = Number.isFinite(min) && Math.abs(value - min) < 1e-9;
+      const decimals = Math.min(6, Math.max(
+        decimalPlaces(input.getAttribute("step") || ""),
+        isAtMin ? decimalPlaces(input.getAttribute("min") || "") : 0
+      ));
+      const scale = 10 ** decimals;
+      const rounded = Math.round(value * scale) / scale;
+      return decimals > 0
+        ? rounded.toFixed(decimals).replace(/\\.?0+$/, "")
+        : String(Math.round(rounded));
+    }
+
+    function decimalPlaces(value) {
+      const text = String(value).toLowerCase();
+      if (!text || text === "any" || !Number.isFinite(Number(text))) {
+        return 0;
+      }
+
+      const parts = text.split("e");
+      const mantissa = parts[0];
+      const exponent = parts.length > 1 ? Number(parts[1]) : 0;
+      const pointIndex = mantissa.indexOf(".");
+      const mantissaDecimals = pointIndex === -1 ? 0 : mantissa.length - pointIndex - 1;
+      return Math.max(0, mantissaDecimals - exponent);
+    }
 
     function x(freqGHz) {
       return chart.marginLeft + ((freqGHz - chart.displayMinFreq) / (chart.displayMaxFreq - chart.displayMinFreq)) * chart.plotWidth;
