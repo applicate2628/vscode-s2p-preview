@@ -10,6 +10,21 @@
 
 ---
 
+## External Review Corrections
+
+Claude CLI pre-implementation review found several runtime traps in the first draft. These corrections override the concrete snippets below when they differ:
+
+- `isRecord` already exists in `src/passband.ts`; reuse it for marker sanitization.
+- `currentMarkerPreset()` is a client-side webview-script function, near `currentRenormalizePreset()`, not a TypeScript helper.
+- `clipBands`, `formatBands`, and `coverageGHz` already exist in the client script; marker metrics must reuse them instead of redefining duplicate helpers unless the existing signatures change.
+- Use `formatDb()` for dB labels; do not use `formatOhm()` for marker labels or marker metrics.
+- Marker add/delete must update both the editor rows and the SVG marker layer. Implement `renderMarkerLayerMarkup()`, `renderMarkerEditorRows()`, and `syncMarkerDom()` client-side rather than only mutating existing server-rendered nodes.
+- Use delegated pointer handling on the SVG marker layer so drag handlers survive marker-layer re-rendering and renormalized chart updates.
+- Convert pointer positions with `svg.createSVGPoint()` and `svg.getScreenCTM().inverse()` before mapping Y to dB; do not mix CSS pixel height with SVG viewBox units.
+- Add a wide transparent drag handle for each marker line so the visible thin line remains easy to grab.
+- Reset `markerState.markers` from the selected preset on every preset switch and call `syncMarkerDom()` before `updatePassband()`.
+- Cap editable markers to a small fixed limit, initially `10`, to avoid unusable metric tables and slow DOM updates.
+
 ## File Map
 
 - `src/passband.ts`: Owns preset types, default markers, and marker sanitization.
