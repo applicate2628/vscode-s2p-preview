@@ -103,3 +103,56 @@ test("package exposes marker feature toggles", () => {
   assert.match(packageSource, /"s2pPreview\.markers\.editable"/);
   assert.match(packageSource, /"s2pPreview\.markers\.metrics\.enabled"/);
 });
+
+test("chart renders axis grid separately from dB marker lines", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /class="grid"/);
+  assert.match(extensionSource, /id="marker-layer"/);
+  assert.match(extensionSource, /class="db-marker-line"/);
+  assert.match(extensionSource, /class="db-marker-handle"/);
+  assert.match(extensionSource, /data-marker-index/);
+  assert.doesNotMatch(extensionSource, /const guides = \[-3, -15, -20\]/);
+});
+
+test("marker editor supports add delete value editing and delegated dragging", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /id="marker-editor"/);
+  assert.match(extensionSource, /id="marker-editor-list"/);
+  assert.match(extensionSource, /id="add-marker-button"/);
+  assert.match(extensionSource, /function renderMarkerEditor/);
+  assert.match(extensionSource, /function renderMarkerEditorRows\(\)/);
+  assert.match(extensionSource, /function syncMarkerDom/);
+  assert.match(extensionSource, /function installMarkerDragging\(\)/);
+  assert.match(extensionSource, /createSVGPoint\(\)/);
+  assert.match(extensionSource, /getScreenCTM\(\)\.inverse\(\)/);
+  assert.match(extensionSource, /setPointerCapture/);
+});
+
+test("marker state follows selected presets and marker feature settings", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /const markerSettings = settings\.markers/);
+  assert.match(extensionSource, /function applyMarkerPreset\(markers\)/);
+  assert.match(extensionSource, /applyMarkerPreset\(preset\.markers\)/);
+  assert.match(extensionSource, /markerSettings\.enabled/);
+  assert.match(extensionSource, /markerSettings\.editable/);
+});
+
+test("marker metrics are generated from marker values instead of fixed thresholds", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /let currentSeriesRows =/);
+  assert.match(extensionSource, /function updateMarkerMetrics\(\)/);
+  assert.match(extensionSource, /markerState\.markers\.forEach/);
+  assert.match(extensionSource, /row\.db >= marker\.db/);
+  assert.match(extensionSource, /row\.db <= marker\.db/);
+});
+
+test("marker metrics can be disabled independently from marker lines", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /markerSettings\.metricsEnabled/);
+  assert.match(extensionSource, /id="marker-metrics"/);
+});

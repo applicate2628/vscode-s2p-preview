@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import {
   AUTO_PASSBAND_LABEL,
+  DEFAULT_DB_MARKERS,
   DEFAULT_PASSBAND_PRESETS,
   createAutoPassband,
   normalizeDefaultPassbandLabel,
@@ -751,8 +752,8 @@ function renderPreviewHtml(
   options: { canPickOverlay?: boolean } = {}
 ): string {
   const defaultPreset = resolveInitialPassband(model, settings);
-  const chart = renderChart(model.series, defaultPreset);
-  const metricsTable = renderMetrics(defaultPreset, model.metricRows);
+  const chart = renderChart(model.series, defaultPreset, settings.markers);
+  const metricsTable = renderMetrics(defaultPreset, settings, model.metricRows);
   const controls = renderControls(defaultPreset, options.canPickOverlay === true, model.impedance);
   const traceSelector = renderTraceSelector(model.series, defaultPreset);
   const warnings = renderWarnings(model.warnings ?? []);
@@ -1066,7 +1067,7 @@ interface ChartGeometry {
   yMax: number;
 }
 
-function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): string {
+function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset, markerSettings: MarkerFeatureSettings): string {
   const chart = chartGeometry(series);
   const xTicks = range(Math.ceil(chart.minFreq), Math.floor(chart.maxFreq), 1);
   const yTicks = range(Math.ceil(chart.yMin / 10) * 10, 0, 10);
@@ -1074,7 +1075,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
   const visibleStop = Math.min(defaultPreset.stopGHz, chart.maxFreq);
   const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
-  const guides = [-3, -15, -20];
+  const markers = sanitizePresetMarkers(defaultPreset.markers);
   const hasOverlaySeries = series.some((item) => item.cssClass.includes("overlay-line"));
   const legendGroups = hasOverlaySeries ? legendGroupsForSeries(series) : [];
   const showSeriesLegend = hasOverlaySeries || series.length <= 4;
@@ -1097,7 +1098,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
         <rect id="passband-rect" class="passband" x="${passbandX.toFixed(2)}" y="${chart.margin.top}" width="${passbandWidth.toFixed(2)}" height="${chart.plotHeight}" />
         ${xTicks.map((tick) => `<line class="grid" x1="${xCoord(tick, chart).toFixed(2)}" y1="${chart.margin.top}" x2="${xCoord(tick, chart).toFixed(2)}" y2="${chart.margin.top + chart.plotHeight}" />`).join("")}
         ${yTicks.map((tick) => `<line class="grid" x1="${chart.margin.left}" y1="${yCoord(tick, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(tick, chart).toFixed(2)}" />`).join("")}
-        ${guides.map((guide) => `<line class="guide" x1="${chart.margin.left}" y1="${yCoord(guide, chart).toFixed(2)}" x2="${chart.margin.left + chart.plotWidth}" y2="${yCoord(guide, chart).toFixed(2)}" /><text class="guide-label" x="${chart.margin.left + chart.plotWidth - 56}" y="${(yCoord(guide, chart) - 5).toFixed(2)}">${guide} dB</text>`).join("")}
+        ${renderMarkerLayer(markers, chart, markerSettings)}
         ${series.map((item, index) => {
           const key = traceKey(item.selector);
           return `<polyline id="series-${index}" class="curve ${escapeHtml(item.cssClass)}${item.defaultVisible ? "" : " series-hidden"}" ${key ? `data-series-trace-key="${escapeHtml(key)}"` : ""}${seriesStyleAttribute(item)} points="${linePoints(item.rows, chart)}" />`;
@@ -1111,7 +1112,62 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset): stri
       ${legendItems ? `<div class="chart-legend ${legendModeClass}"${legendStyle} aria-label="Plot legend">
         ${legendItems}
       </div>` : ""}
+      ${renderMarkerEditor(markers, markerSettings)}
     </section>
+  `;
+}
+
+function renderMarkerLayer(
+  markers: readonly PassbandPresetMarker[],
+  chart: ChartGeometry,
+  markerSettings: MarkerFeatureSettings
+): string {
+  const hiddenStyle = markerSettings.enabled ? "" : ` style="display: none"`;
+  return `
+        <g id="marker-layer" class="marker-layer" data-editable="${markerSettings.editable}"${hiddenStyle}>
+          ${markers.map((marker, index) => renderMarkerSvg(marker, index, chart, markerSettings.editable)).join("")}
+        </g>`;
+}
+
+function renderMarkerSvg(
+  marker: PassbandPresetMarker,
+  index: number,
+  chart: ChartGeometry,
+  editable: boolean
+): string {
+  const y = yCoord(marker.db, chart).toFixed(2);
+  const label = marker.label || `${formatDbLabel(marker.db)} dB`;
+  const dragAttrs = editable ? ` data-marker-index="${index}" tabindex="0"` : ` data-marker-index="${index}"`;
+  return `
+          <g class="db-marker" data-marker-index="${index}">
+            <line class="db-marker-handle" x1="${chart.margin.left}" y1="${y}" x2="${chart.margin.left + chart.plotWidth}" y2="${y}"${dragAttrs} />
+            <line class="db-marker-line" x1="${chart.margin.left}" y1="${y}" x2="${chart.margin.left + chart.plotWidth}" y2="${y}" />
+            <text class="db-marker-label" x="${chart.margin.left + chart.plotWidth - 70}" y="${(Number(y) - 5).toFixed(2)}">${escapeHtml(label)}</text>
+          </g>
+  `;
+}
+
+function renderMarkerEditor(markers: readonly PassbandPresetMarker[], markerSettings: MarkerFeatureSettings): string {
+  const editable = markerSettings.editable;
+  return `
+      <div id="marker-editor" class="marker-editor" data-editable="${editable}"${markerSettings.enabled ? "" : " hidden"}>
+        <div class="marker-editor-title">dB markers</div>
+        <div id="marker-editor-list" class="marker-editor-list">
+          ${markers.map((marker, index) => renderMarkerEditorRow(marker, index, editable)).join("")}
+        </div>
+        ${editable ? `<button id="add-marker-button" class="secondary-action marker-add-button" type="button">+ Add marker</button>` : ""}
+      </div>
+  `;
+}
+
+function renderMarkerEditorRow(marker: PassbandPresetMarker, index: number, editable: boolean): string {
+  const disabled = editable ? "" : " disabled";
+  return `
+          <div class="marker-editor-row" data-marker-index="${index}">
+            <input class="marker-db-input" type="number" step="1" value="${marker.db}" data-marker-db="${index}" aria-label="Marker ${index + 1} dB"${disabled} />
+            <input class="marker-label-input" type="text" value="${escapeHtml(marker.label)}" data-marker-label="${index}" aria-label="Marker ${index + 1} label"${disabled} />
+            ${editable ? `<button class="marker-delete-button" type="button" data-marker-delete="${index}" aria-label="Delete marker">x</button>` : ""}
+          </div>
   `;
 }
 
@@ -1226,12 +1282,15 @@ function yCoord(db: number, chart: ChartGeometry): number {
   return chart.margin.top + ((chart.yMax - db) / (chart.yMax - chart.yMin)) * chart.plotHeight;
 }
 
-function renderMetrics(defaultPreset: PassbandPreset, metricRows?: S2pRow[]): string {
+function renderMetrics(defaultPreset: PassbandPreset, settings: PassbandSettings, metricRows?: S2pRow[]): string {
+  const markerMetricsHidden = settings.markers.enabled && settings.markers.metricsEnabled ? "" : " hidden";
+  const markerMetrics = `<div id="marker-metrics" class="marker-metrics"${markerMetricsHidden}></div>`;
   if (!metricRows) {
     return `
       <section class="metrics">
         <h2 id="metrics-title">${escapeHtml(formatRangeLabel(defaultPreset.startGHz, defaultPreset.stopGHz))} Metrics</h2>
         <p id="metric-status" class="metric-status">2-port passband metrics are not available for this file.</p>
+        ${markerMetrics}
       </section>
     `;
   }
@@ -1251,6 +1310,7 @@ function renderMetrics(defaultPreset: PassbandPreset, metricRows?: S2pRow[]): st
           <tr><th>Matched coverage inside passband</th><td id="metric-matched-coverage">-</td></tr>
         </tbody>
       </table>
+      ${markerMetrics}
     </section>
   `;
 }
@@ -1259,9 +1319,18 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
   const chart = chartGeometry(model.series);
   const metricRows = model.metricRows ?? [];
   const metricRowsJson = jsonForScript(metricRows);
+  const seriesRowsJson = jsonForScript(model.series.map((item, index) => ({
+    index,
+    label: item.label,
+    selector: item.selector,
+    defaultVisible: item.defaultVisible,
+    rows: item.rows
+  })));
   const impedanceJson = jsonForScript(model.impedance);
   const settingsJson = jsonForScript(settings);
   const fileLabelJson = jsonForScript(model.fileLabel);
+  const initialMarkersJson = jsonForScript(sanitizePresetMarkers(resolveInitialPassband(model, settings).markers));
+  const defaultMarkersJson = jsonForScript(DEFAULT_DB_MARKERS);
   const hasMetricRows = model.metricRows ? "true" : "false";
 
   return `
@@ -1269,16 +1338,22 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const AUTO_PASSBAND_LABEL = ${jsonForScript(AUTO_PASSBAND_LABEL)};
     const METRICS_UNAVAILABLE = "2-port passband metrics are not available for this file.";
     const metricRows = ${metricRowsJson};
+    const seriesRows = ${seriesRowsJson};
     const impedance = ${impedanceJson};
     const exportSourceLabel = ${fileLabelJson};
+    const DEFAULT_DB_MARKERS = ${defaultMarkersJson};
+    const MARKER_LIMIT = 10;
     const hasMetricRows = ${hasMetricRows};
     const MIN_PNG_EXPORT_SCALE = ${MIN_PNG_EXPORT_SCALE};
     const MAX_PNG_EXPORT_SCALE = ${MAX_PNG_EXPORT_SCALE};
     const MAX_PNG_EXPORT_EDGE = ${MAX_PNG_EXPORT_EDGE};
     const MAX_PNG_EXPORT_PIXELS = ${MAX_PNG_EXPORT_PIXELS};
     let currentMetricRows = metricRows;
+    let currentSeriesRows = seriesRows;
     let settings = ${settingsJson};
+    const markerSettings = settings.markers || { enabled: true, editable: true, metricsEnabled: true };
     let activePresetLabel = settings.defaultPresetLabel;
+    let markerState = { markers: sanitizeClientMarkers(${initialMarkersJson}) };
     const chart = {
       minFreq: ${chart.minFreq},
       maxFreq: ${chart.maxFreq},
@@ -1302,6 +1377,11 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const exportPngButton = document.getElementById("export-png-button");
     const status = document.getElementById("passband-status");
     const passbandRect = document.getElementById("passband-rect");
+    const markerLayer = document.getElementById("marker-layer");
+    const markerEditor = document.getElementById("marker-editor");
+    const markerEditorList = document.getElementById("marker-editor-list");
+    const addMarkerButton = document.getElementById("add-marker-button");
+    const markerMetrics = document.getElementById("marker-metrics");
     const legendPassbandLabel = document.getElementById("legend-passband-label");
     const metricsTitle = document.getElementById("metrics-title");
     const traceInputs = Array.from(document.querySelectorAll("[data-trace-series]"));
@@ -1425,6 +1505,257 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function y(db) {
       return chart.marginTop + ((chart.yMax - db) / (chart.yMax - chart.yMin)) * chart.plotHeight;
+    }
+
+    function markerDbFromSvgY(svgY) {
+      return chart.yMax - ((svgY - chart.marginTop) / chart.plotHeight) * (chart.yMax - chart.yMin);
+    }
+
+    function roundMarkerDb(value) {
+      return Math.round(value * 100) / 100;
+    }
+
+    function sanitizeClientMarkers(markers) {
+      const source = Array.isArray(markers) ? markers : DEFAULT_DB_MARKERS;
+      const sanitized = [];
+      for (const marker of source) {
+        if (!marker || sanitized.length >= MARKER_LIMIT) {
+          continue;
+        }
+        const db = Number(marker.db);
+        if (!Number.isFinite(db)) {
+          continue;
+        }
+        const label = typeof marker.label === "string" && marker.label.trim()
+          ? marker.label.trim()
+          : formatDb(db) + " dB";
+        sanitized.push({ label, db });
+      }
+      return sanitized.length > 0
+        ? sanitized
+        : DEFAULT_DB_MARKERS.map((marker) => ({ label: marker.label, db: marker.db }));
+    }
+
+    function applyMarkerSettings(next) {
+      const source = next || { enabled: true, editable: true, metricsEnabled: true };
+      markerSettings.enabled = source.enabled !== false;
+      markerSettings.editable = source.editable !== false;
+      markerSettings.metricsEnabled = source.metricsEnabled !== false;
+    }
+
+    function applyMarkerPreset(markers) {
+      markerState.markers = sanitizeClientMarkers(markers);
+      syncMarkerDom({ renderEditor: true });
+    }
+
+    function renderMarkerLayerMarkup() {
+      if (!markerSettings.enabled) {
+        return "";
+      }
+      return markerState.markers.map((marker, index) => {
+        const markerY = y(marker.db).toFixed(2);
+        const label = marker.label || formatDb(marker.db) + " dB";
+        const dragAttrs = markerSettings.editable ? ' data-marker-index="' + index + '" tabindex="0"' : ' data-marker-index="' + index + '"';
+        return ''
+          + '<g class="db-marker" data-marker-index="' + index + '">'
+          + '<line class="db-marker-handle" x1="' + chart.marginLeft + '" y1="' + markerY + '" x2="' + (chart.marginLeft + chart.plotWidth) + '" y2="' + markerY + '"' + dragAttrs + ' />'
+          + '<line class="db-marker-line" x1="' + chart.marginLeft + '" y1="' + markerY + '" x2="' + (chart.marginLeft + chart.plotWidth) + '" y2="' + markerY + '" />'
+          + '<text class="db-marker-label" x="' + (chart.marginLeft + chart.plotWidth - 70) + '" y="' + (Number(markerY) - 5).toFixed(2) + '">' + escapeXml(label) + '</text>'
+          + '</g>';
+      }).join("");
+    }
+
+    function renderMarkerEditorRows() {
+      if (!markerEditorList) {
+        return;
+      }
+      markerEditorList.innerHTML = markerState.markers.map((marker, index) => renderMarkerEditorRow(marker, index)).join("");
+      updateMarkerAddButton();
+    }
+
+    function renderMarkerEditorRow(marker, index) {
+      const disabled = markerSettings.editable ? "" : " disabled";
+      const deleteButton = markerSettings.editable
+        ? '<button class="marker-delete-button" type="button" data-marker-delete="' + index + '" aria-label="Delete marker">x</button>'
+        : "";
+      return ''
+        + '<div class="marker-editor-row" data-marker-index="' + index + '">'
+        + '<input class="marker-db-input" type="number" step="1" value="' + escapeXml(marker.db) + '" data-marker-db="' + index + '" aria-label="Marker ' + (index + 1) + ' dB"' + disabled + ' />'
+        + '<input class="marker-label-input" type="text" value="' + escapeXml(marker.label) + '" data-marker-label="' + index + '" aria-label="Marker ' + (index + 1) + ' label"' + disabled + ' />'
+        + deleteButton
+        + '</div>';
+    }
+
+    function syncMarkerDom(options = {}) {
+      if (markerLayer) {
+        markerLayer.style.display = markerSettings.enabled ? "" : "none";
+        markerLayer.dataset.editable = String(markerSettings.editable);
+        markerLayer.innerHTML = renderMarkerLayerMarkup();
+      }
+      if (markerEditor) {
+        markerEditor.hidden = !markerSettings.enabled;
+        markerEditor.dataset.editable = String(markerSettings.editable);
+      }
+      if (options.renderEditor) {
+        renderMarkerEditorRows();
+      } else {
+        updateMarkerEditorValues();
+      }
+      updateMarkerMetrics();
+    }
+
+    function updateMarkerEditorValues() {
+      if (!markerEditorList) {
+        return;
+      }
+      for (const marker of markerState.markers) {
+        const index = markerState.markers.indexOf(marker);
+        const dbInput = markerEditorList.querySelector('[data-marker-db="' + index + '"]');
+        const labelInput = markerEditorList.querySelector('[data-marker-label="' + index + '"]');
+        if (dbInput && document.activeElement !== dbInput) {
+          dbInput.value = formatDb(marker.db);
+        }
+        if (labelInput && document.activeElement !== labelInput) {
+          labelInput.value = marker.label;
+        }
+      }
+      updateMarkerAddButton();
+    }
+
+    function updateMarkerAddButton() {
+      if (addMarkerButton) {
+        addMarkerButton.disabled = !markerSettings.enabled || !markerSettings.editable || markerState.markers.length >= MARKER_LIMIT;
+      }
+    }
+
+    function markerDbFromPointerEvent(event) {
+      const svg = markerLayer?.ownerSVGElement;
+      if (!svg) {
+        return Number.NaN;
+      }
+      try {
+        const source = svg.createSVGPoint();
+        source.x = event.clientX;
+        source.y = event.clientY;
+        const point = source.matrixTransform(svg.getScreenCTM().inverse());
+        const clampedY = Math.min(chart.marginTop + chart.plotHeight, Math.max(chart.marginTop, point.y));
+        return roundMarkerDb(markerDbFromSvgY(clampedY));
+      } catch {
+        return Number.NaN;
+      }
+    }
+
+    function markerIndexFromEvent(event) {
+      const target = event.target instanceof Element
+        ? event.target.closest("[data-marker-index]")
+        : null;
+      if (!target || !markerLayer || !markerLayer.contains(target)) {
+        return -1;
+      }
+      const index = Number(target.dataset.markerIndex);
+      return Number.isInteger(index) ? index : -1;
+    }
+
+    function installMarkerDragging() {
+      if (!markerLayer) {
+        return;
+      }
+      let activePointerId = null;
+      let activeMarkerIndex = -1;
+
+      markerLayer.addEventListener("pointerdown", (event) => {
+        if (!markerSettings.enabled || !markerSettings.editable) {
+          return;
+        }
+        const index = markerIndexFromEvent(event);
+        if (!markerState.markers[index]) {
+          return;
+        }
+        activePointerId = event.pointerId;
+        activeMarkerIndex = index;
+        markerLayer.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        updateMarkerFromPointer(event, activeMarkerIndex);
+      });
+
+      markerLayer.addEventListener("pointermove", (event) => {
+        if (event.pointerId !== activePointerId || activeMarkerIndex < 0) {
+          return;
+        }
+        updateMarkerFromPointer(event, activeMarkerIndex);
+      });
+
+      const finishDrag = (event) => {
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        if (markerLayer.hasPointerCapture(event.pointerId)) {
+          markerLayer.releasePointerCapture(event.pointerId);
+        }
+        activePointerId = null;
+        activeMarkerIndex = -1;
+      };
+      markerLayer.addEventListener("pointerup", finishDrag);
+      markerLayer.addEventListener("pointercancel", finishDrag);
+    }
+
+    function updateMarkerFromPointer(event, index) {
+      const db = markerDbFromPointerEvent(event);
+      if (!Number.isFinite(db) || !markerState.markers[index]) {
+        return;
+      }
+      markerState.markers[index].db = db;
+      markerState.markers[index].label = markerState.markers[index].label || formatDb(db) + " dB";
+      syncMarkerDom();
+    }
+
+    function installMarkerEditor() {
+      if (!markerSettings.enabled || !markerSettings.editable) {
+        updateMarkerAddButton();
+      }
+      if (addMarkerButton) {
+        addMarkerButton.addEventListener("click", () => {
+          if (!markerSettings.enabled || !markerSettings.editable || markerState.markers.length >= MARKER_LIMIT) {
+            return;
+          }
+          markerState.markers.push({ label: "-30 dB", db: -30 });
+          syncMarkerDom({ renderEditor: true });
+        });
+      }
+      if (!markerEditorList) {
+        return;
+      }
+      markerEditorList.addEventListener("input", (event) => {
+        if (!markerSettings.enabled || !markerSettings.editable || !(event.target instanceof HTMLInputElement)) {
+          return;
+        }
+        const dbIndex = Number(event.target.dataset.markerDb);
+        const labelIndex = Number(event.target.dataset.markerLabel);
+        if (Number.isInteger(dbIndex) && markerState.markers[dbIndex]) {
+          const db = Number(event.target.value);
+          if (Number.isFinite(db)) {
+            markerState.markers[dbIndex].db = db;
+            if (!markerState.markers[dbIndex].label) {
+              markerState.markers[dbIndex].label = formatDb(db) + " dB";
+            }
+            syncMarkerDom();
+          }
+        }
+        if (Number.isInteger(labelIndex) && markerState.markers[labelIndex]) {
+          markerState.markers[labelIndex].label = event.target.value;
+          syncMarkerDom();
+        }
+      });
+      markerEditorList.addEventListener("click", (event) => {
+        if (!markerSettings.enabled || !markerSettings.editable || !(event.target instanceof HTMLElement)) {
+          return;
+        }
+        const index = Number(event.target.dataset.markerDelete);
+        if (Number.isInteger(index) && markerState.markers[index]) {
+          markerState.markers.splice(index, 1);
+          syncMarkerDom({ renderEditor: true });
+        }
+      });
     }
 
     function formatRange(startGHz, stopGHz) {
@@ -1755,6 +2086,93 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       return bands.reduce((sum, band) => sum + Math.max(0, band.endGHz - band.startGHz), 0);
     }
 
+    function findSeriesBands(rows, predicate) {
+      const bands = [];
+      let activeStart = null;
+      let activeEnd = null;
+
+      for (const row of rows) {
+        if (predicate(row)) {
+          if (activeStart === null) {
+            activeStart = row.freqGHz;
+          }
+          activeEnd = row.freqGHz;
+        } else if (activeStart !== null) {
+          bands.push({ startGHz: activeStart, endGHz: activeEnd });
+          activeStart = null;
+          activeEnd = null;
+        }
+      }
+
+      if (activeStart !== null) {
+        bands.push({ startGHz: activeStart, endGHz: activeEnd });
+      }
+
+      return bands;
+    }
+
+    function clearMarkerMetrics(message) {
+      if (markerMetrics && markerSettings.enabled && markerSettings.metricsEnabled) {
+        markerMetrics.hidden = false;
+        markerMetrics.innerHTML = '<p class="metric-status">' + escapeXml(message) + '</p>';
+      }
+    }
+
+    function visibleSeriesIndexSet() {
+      if (traceInputs.length === 0) {
+        return new Set(currentSeriesRows
+          .filter((series) => series.defaultVisible)
+          .map((series) => series.index));
+      }
+
+      return new Set(traceInputs
+        .filter((input) => input.checked)
+        .map((input) => Number(input.dataset.traceSeries))
+        .filter((index) => Number.isInteger(index)));
+    }
+
+    function updateMarkerMetrics() {
+      if (!markerMetrics) {
+        return;
+      }
+
+      markerMetrics.hidden = !markerSettings.enabled || !markerSettings.metricsEnabled;
+      if (markerMetrics.hidden) {
+        markerMetrics.innerHTML = "";
+        return;
+      }
+
+      const startGHz = Number(startInput.value);
+      const stopGHz = Number(stopInput.value);
+      if (!Number.isFinite(startGHz) || !Number.isFinite(stopGHz) || startGHz >= stopGHz) {
+        clearMarkerMetrics("Use a finite start below stop.");
+        return;
+      }
+
+      const visibleIndices = visibleSeriesIndexSet();
+      const sections = [];
+      markerState.markers.forEach((marker) => {
+        const rows = [];
+        for (const series of currentSeriesRows) {
+          if (!visibleIndices.has(series.index)) {
+            continue;
+          }
+          const passbandRows = series.rows.filter((row) => row.freqGHz >= startGHz && row.freqGHz <= stopGHz);
+          const aboveBands = clipBands(findSeriesBands(passbandRows, (row) => row.db >= marker.db), startGHz, stopGHz);
+          const belowBands = clipBands(findSeriesBands(passbandRows, (row) => row.db <= marker.db), startGHz, stopGHz);
+          rows.push(
+            '<tr><th>' + escapeXml(series.label) + ' &gt;= ' + formatDb(marker.db) + ' dB</th><td>' + escapeXml(formatBands(aboveBands)) + ' (' + coverageGHz(aboveBands).toFixed(2) + ' GHz)</td></tr>',
+            '<tr><th>' + escapeXml(series.label) + ' &lt;= ' + formatDb(marker.db) + ' dB</th><td>' + escapeXml(formatBands(belowBands)) + ' (' + coverageGHz(belowBands).toFixed(2) + ' GHz)</td></tr>'
+          );
+        }
+        sections.push(
+          '<section class="marker-metric-group"><h3>' + escapeXml(marker.label || formatDb(marker.db) + ' dB') + '</h3>'
+          + '<table><tbody>' + (rows.length > 0 ? rows.join("") : '<tr><td>No visible traces.</td></tr>') + '</tbody></table></section>'
+        );
+      });
+      markerMetrics.innerHTML = sections.join("");
+    }
+
     function updateImpedancePreview() {
       if (!impedance || targetOhmsInputs.length === 0) {
         return;
@@ -1782,6 +2200,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         effectiveZ0.textContent = formatReferenceOhms("Active Z0", message.effectiveReferenceOhms);
       }
       updateChartSeries(message.seriesRows);
+      currentSeriesRows = currentSeriesRows.map((series, index) => ({
+        ...series,
+        rows: Array.isArray(message.seriesRows[index]) ? message.seriesRows[index] : series.rows
+      }));
       currentMetricRows = hasMetricRows ? message.metricRows : [];
       updatePassband();
     }
@@ -1812,6 +2234,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           legend.classList.toggle("series-hidden", hidden);
         }
       }
+      updateMarkerMetrics();
     }
 
     function applyTracePreset(traces) {
@@ -1942,6 +2365,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       passbandRect.setAttribute("width", "0");
       setMetricStatus(message);
       clearMetricCells();
+      clearMarkerMetrics(message);
     }
 
     function setPresetMenuOpen(open) {
@@ -2047,6 +2471,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       startInput.value = String(preset.startGHz);
       stopInput.value = String(preset.stopGHz);
       applyTracePreset(preset.traces);
+      applyMarkerPreset(preset.markers);
       const renormalizeApplied = applyRenormalizePreset(preset.renormalize);
       updatePresetControls();
       renderPresetMenu();
@@ -2096,6 +2521,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       status.textContent = "";
       if (!hasMetricRows) {
         setMetricStatus(METRICS_UNAVAILABLE);
+        updateMarkerMetrics();
         return;
       }
       setMetricStatus("");
@@ -2120,6 +2546,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       setText("metric-s21-bands", formatBands(s21Bands));
       setText("metric-matched-bands", formatBands(matchedBands));
       setText("metric-matched-coverage", coverageGHz(matchedBands).toFixed(2) + " GHz");
+      updateMarkerMetrics();
     }
 
     startInput.addEventListener("input", updatePassband);
@@ -2175,6 +2602,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       const message = event.data;
       if (message.type === "settingsUpdated") {
         settings = message.settings;
+        applyMarkerSettings(settings.markers);
         activePresetLabel = settings.defaultPresetLabel;
         renderPresetMenu();
         applyPreset(selectedPreset(), false);
@@ -2189,6 +2617,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     });
 
     renderPresetMenu();
+    installMarkerEditor();
+    installMarkerDragging();
     applyPreset(selectedPreset(), false);
   `;
 }
@@ -2292,6 +2722,11 @@ function formatRangeLabel(startGHz: number, stopGHz: number): string {
 }
 
 function formatGHz(value: number): string {
+  const fixed = value.toFixed(3);
+  return fixed.replace(/\.?0+$/, "");
+}
+
+function formatDbLabel(value: number): string {
   const fixed = value.toFixed(3);
   return fixed.replace(/\.?0+$/, "");
 }
@@ -2611,6 +3046,9 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .axis { fill: none; stroke: var(--vscode-foreground, #1f2328); stroke-width: 1.2; opacity: 0.82; }
     .guide { stroke: var(--vscode-descriptionForeground, #6a737d); stroke-width: 1; stroke-dasharray: 5 5; }
     .guide-label, .tick, .axis-label { fill: var(--vscode-descriptionForeground, #6a737d); font-size: 12px; }
+    .db-marker-line { stroke: var(--vscode-charts-purple, #8e75ff); stroke-width: 1.4; stroke-dasharray: 7 5; pointer-events: none; }
+    .db-marker-handle { stroke: transparent; stroke-width: 14; cursor: ns-resize; }
+    .db-marker-label { fill: var(--vscode-descriptionForeground, #6a737d); font-size: 12px; pointer-events: none; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
       height: var(--legend-height, 76px);
@@ -2676,6 +3114,61 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       background: var(--accent);
       opacity: 0.14;
     }
+    .marker-editor {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px 10px;
+      align-items: start;
+      margin: 10px 0 0 64px;
+      color: var(--muted);
+      font-size: 12px;
+      max-width: min(620px, calc(100% - 64px));
+    }
+    .marker-editor[hidden] { display: none; }
+    .marker-editor-title { grid-column: 1 / -1; color: var(--vscode-foreground); font-weight: 600; }
+    .marker-editor-list {
+      display: grid;
+      gap: 5px;
+      max-height: 128px;
+      overflow: auto;
+      min-width: 0;
+    }
+    .marker-editor-row {
+      display: grid;
+      grid-template-columns: minmax(74px, 92px) minmax(112px, 1fr) 28px;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .marker-editor-row input {
+      min-width: 0;
+      width: 100%;
+      color: var(--vscode-input-foreground, var(--vscode-foreground));
+      background: var(--vscode-input-background, var(--surface-strong));
+      border: 1px solid var(--vscode-input-border, var(--border));
+      border-radius: 4px;
+      padding: 5px 6px;
+      font: inherit;
+    }
+    .marker-add-button { min-height: 30px; align-self: end; }
+    .marker-delete-button {
+      min-width: 28px;
+      min-height: 28px;
+      color: var(--vscode-icon-foreground);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .marker-delete-button:hover { color: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
+    .marker-metrics {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .marker-metrics[hidden] { display: none; }
+    .marker-metric-group + .marker-metric-group { margin-top: 12px; }
+    .marker-metric-group h3 { margin: 0 0 7px; font-size: 13px; }
     .s11 { stroke: #ef4444; }
     .s21 { stroke: #22c55e; }
     .s22 { stroke: #38bdf8; }
