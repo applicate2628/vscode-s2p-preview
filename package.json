@@ -62,7 +62,7 @@
       "properties": {
         "s2pPreview.passbandPresets": {
           "type": "array",
-          "markdownDescription": "Named view presets shown in the S2P preview. Presets always store a passband range and may also store visible S-parameter traces plus per-port Z0 renormalization.",
+          "markdownDescription": "Named view presets shown in the S2P preview. Presets always store a passband range and may also store visible S-parameter traces, per-port Z0 renormalization, and dB marker lines.",
           "default": [
             {
               "label": "1-10 GHz",
@@ -140,6 +140,27 @@
                     }
                   }
                 }
+              },
+              "markers": {
+                "type": "array",
+                "description": "Optional dB marker lines for this preset.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "db"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "description": "Marker label shown in the preview."
+                    },
+                    "db": {
+                      "type": "number",
+                      "description": "Marker level in dB."
+                    }
+                  }
+                }
               }
             }
           }
@@ -148,6 +169,21 @@
           "type": "string",
           "markdownDescription": "Label of the passband preset used when opening the preview. Use `Auto / Full file range` to span the loaded file.",
           "default": "Auto / Full file range"
+        },
+        "s2pPreview.markers.enabled": {
+          "type": "boolean",
+          "markdownDescription": "Show dB marker lines and marker controls in the preview.",
+          "default": true
+        },
+        "s2pPreview.markers.editable": {
+          "type": "boolean",
+          "markdownDescription": "Allow dB marker dragging, adding, deleting, and value editing.",
+          "default": true
+        },
+        "s2pPreview.markers.metrics.enabled": {
+          "type": "boolean",
+          "markdownDescription": "Show per-marker metrics in the preview.",
+          "default": true
         },
         "s2pPreview.autoRefreshOnFileChange": {
           "type": "boolean",

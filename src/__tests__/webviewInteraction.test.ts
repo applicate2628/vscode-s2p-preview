@@ -86,3 +86,20 @@ test("Z0 target inputs still share the same change path for typing and native sp
   assert.match(extensionSource, /function handleZ0TargetInput\(input\)/);
   assert.match(extensionSource, /input\.addEventListener\("input", \(\) => \{\s+handleZ0TargetInput\(input\);/);
 });
+
+test("webview saves current dB markers with passband presets", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /markers\?: PassbandPresetMarker\[\]/);
+  assert.match(extensionSource, /markers: currentMarkerPreset\(\)/);
+  assert.match(extensionSource, /function currentMarkerPreset\(\)/);
+  assert.match(extensionSource, /sanitizePresetMarkers\(item\.markers\)/);
+});
+
+test("package exposes marker feature toggles", () => {
+  const packageSource = readFileSync(resolve(__dirname, "../../package.json"), "utf8");
+
+  assert.match(packageSource, /"s2pPreview\.markers\.enabled"/);
+  assert.match(packageSource, /"s2pPreview\.markers\.editable"/);
+  assert.match(packageSource, /"s2pPreview\.markers\.metrics\.enabled"/);
+});

@@ -6,12 +6,13 @@ import {
   DEFAULT_PASSBAND_PRESETS,
   createAutoPassband,
   normalizeDefaultPassbandLabel,
+  sanitizePresetMarkers,
   sanitizePresetRenormalize,
   sanitizePresetTraces,
   upsertPassbandPreset,
   userScopedConfigurationValue
 } from "./passband";
-import type { PassbandPreset, PassbandPresetRenormalize, PassbandPresetTrace } from "./passband";
+import type { PassbandPreset, PassbandPresetMarker, PassbandPresetRenormalize, PassbandPresetTrace } from "./passband";
 import { formatEffectiveReferenceOhms, formatFileReferenceOhms } from "./impedanceDisplay";
 import {
   ChartPoint,
@@ -51,6 +52,13 @@ let lastActivePreviewPanel: vscode.WebviewPanel | undefined;
 interface PassbandSettings {
   presets: PassbandPreset[];
   defaultPresetLabel: string;
+  markers: MarkerFeatureSettings;
+}
+
+interface MarkerFeatureSettings {
+  enabled: boolean;
+  editable: boolean;
+  metricsEnabled: boolean;
 }
 
 interface PreviewDocumentState {
@@ -74,6 +82,7 @@ type WebviewMessage =
     activePresetLabel?: string;
     traces?: PassbandPresetTrace[];
     renormalize?: PassbandPresetRenormalize;
+    markers?: PassbandPresetMarker[];
   }
   | { type: "deletePreset"; label: string }
   | { type: "setDefaultPreset"; label: string }
@@ -132,6 +141,15 @@ export function activate(context: vscode.ExtensionContext): void {
         || event.affectsConfiguration("s2pPreview.autoRefreshDebounceMs")
       ) {
         refreshPreviewAutoRefreshWatchers();
+      }
+      if (
+        event.affectsConfiguration("s2pPreview.passbandPresets")
+        || event.affectsConfiguration("s2pPreview.defaultPassbandPreset")
+        || event.affectsConfiguration("s2pPreview.markers.enabled")
+        || event.affectsConfiguration("s2pPreview.markers.editable")
+        || event.affectsConfiguration("s2pPreview.markers.metrics.enabled")
+      ) {
+        void broadcastPassbandSettings();
       }
     })
   );
@@ -339,7 +357,8 @@ function attachWebviewMessageHandler(panel: vscode.WebviewPanel): void {
             message.stopGHz,
             message.activePresetLabel,
             message.traces,
-            message.renormalize
+            message.renormalize,
+            message.markers
           );
           return;
         case "deletePreset":
@@ -400,7 +419,8 @@ async function addPresetFromWebview(
   stopGHz: number,
   activePresetLabel: unknown,
   traces: unknown,
-  renormalize: unknown
+  renormalize: unknown,
+  markers: unknown
 ): Promise<void> {
   const normalized = normalizePresetRange(startGHz, stopGHz);
   if (!normalized) {
@@ -446,6 +466,7 @@ async function addPresetFromWebview(
   if (presetRenormalize) {
     nextPreset.renormalize = presetRenormalize;
   }
+  nextPreset.markers = sanitizePresetMarkers(markers);
   const result = upsertPassbandPreset(settings.presets, nextPreset);
   await updatePassbandSettings(
     panel,
@@ -1880,6 +1901,22 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       };
     }
 
+    function currentMarkerPreset() {
+      if (typeof markerState === "undefined" || !markerState || !Array.isArray(markerState.markers)) {
+        return [];
+      }
+
+      return markerState.markers
+        .map((marker) => {
+          const db = Number(marker.db);
+          const label = typeof marker.label === "string" && marker.label.trim()
+            ? marker.label.trim()
+            : formatDb(db) + " dB";
+          return { label, db };
+        })
+        .filter((marker) => Number.isFinite(marker.db));
+    }
+
     function linePoints(rows) {
       return rows.map((row) => x(row.freqGHz).toFixed(2) + "," + y(row.db).toFixed(2)).join(" ");
     }
@@ -1893,6 +1930,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     }
 
     function formatOhm(value) {
+      return Number(value).toFixed(3).replace(/\\.?0+$/, "");
+    }
+
+    function formatDb(value) {
       return Number(value).toFixed(3).replace(/\\.?0+$/, "");
     }
 
@@ -1986,7 +2027,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           stopGHz: Number(stopInput.value),
           activePresetLabel,
           traces: currentTracePreset(),
-          renormalize: currentRenormalizePreset()
+          renormalize: currentRenormalizePreset(),
+          markers: currentMarkerPreset()
         });
       });
       presetMenu.appendChild(addButton);
@@ -2161,7 +2203,19 @@ function getPassbandSettings(): PassbandSettings {
 
   return {
     presets,
-    defaultPresetLabel: normalizeDefaultPassbandLabel(presets, configuredDefault)
+    defaultPresetLabel: normalizeDefaultPassbandLabel(presets, configuredDefault),
+    markers: markerFeatureSettings(config)
+  };
+}
+
+function markerFeatureSettings(config: vscode.WorkspaceConfiguration): MarkerFeatureSettings {
+  const enabled = config.get<boolean>("markers.enabled", true);
+  const editable = config.get<boolean>("markers.editable", true);
+  const metricsEnabled = config.get<boolean>("markers.metrics.enabled", true);
+  return {
+    enabled: enabled !== false,
+    editable: editable !== false,
+    metricsEnabled: metricsEnabled !== false
   };
 }
 
@@ -2196,6 +2250,7 @@ function sanitizePresets(value: unknown): PassbandPreset[] {
     if (renormalize) {
       preset.renormalize = renormalize;
     }
+    preset.markers = sanitizePresetMarkers(item.markers);
 
     seenLabels.add(label);
     presets.push(preset);
