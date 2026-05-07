@@ -44,7 +44,7 @@ export const DEFAULT_DB_MARKERS: PassbandPresetMarker[] = [
 export const MAX_DB_MARKERS = 10;
 export const MAX_DB_MARKER_LABEL_LENGTH = 64;
 export const MIN_DB_MARKER_VALUE = -200;
-export const MAX_DB_MARKER_VALUE = 20;
+export const MAX_DB_MARKER_VALUE = 200;
 
 export function normalizeDefaultPassbandLabel(presets: readonly PassbandPreset[], configuredDefault: string | undefined): string {
   if (configuredDefault === AUTO_PASSBAND_LABEL) {

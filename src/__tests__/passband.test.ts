@@ -123,7 +123,8 @@ test("sanitizes preset dB markers without replacing empty labels with numbers", 
 test("bounds preset dB markers before rendering", () => {
   const markers = sanitizePresetMarkers([
     { label: "x".repeat(MAX_DB_MARKER_LABEL_LENGTH + 10), db: -3 },
-    { label: "too high", db: 40 },
+    { label: "gain", db: 80 },
+    { label: "too high", db: 300 },
     { label: "too low", db: -260 },
     ...Array.from({ length: MAX_DB_MARKERS + 5 }, (_, index) => ({
       label: `M${index}`,
@@ -133,7 +134,8 @@ test("bounds preset dB markers before rendering", () => {
 
   assert.equal(markers.length, MAX_DB_MARKERS);
   assert.equal(markers[0].label.length, MAX_DB_MARKER_LABEL_LENGTH);
-  assert.deepEqual(markers.slice(1, 3), [
+  assert.deepEqual(markers.slice(1, 4), [
+    { label: "gain", db: 80 },
     { label: "M0", db: -10 },
     { label: "M1", db: -11 }
   ]);

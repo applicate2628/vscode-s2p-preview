@@ -163,7 +163,7 @@
                     "db": {
                       "type": "number",
                       "minimum": -200,
-                      "maximum": 20,
+                      "maximum": 200,
                       "description": "Marker level in dB."
                     }
                   }

@@ -108,7 +108,7 @@ test("package exposes marker feature toggles", () => {
   assert.match(packageSource, /"maxItems":\s*10/);
   assert.match(packageSource, /"maxLength":\s*64/);
   assert.match(packageSource, /"minimum":\s*-200/);
-  assert.match(packageSource, /"maximum":\s*20/);
+  assert.match(packageSource, /"maximum":\s*200/);
 });
 
 test("chart renders axis grid separately from dB marker lines", () => {
