@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.22
 
 - Updated Marketplace and Open VSX description metadata, keywords, and changelog packaging.
 - Fixed dB marker inputs so incomplete negative typing such as `-` is not overwritten while editing.
