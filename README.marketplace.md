@@ -7,7 +7,7 @@ Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF
 ## Why Use It
 
 - Inspect Touchstone S-parameter charts without leaving VS Code.
-- Compare design variants with overlays, saved presets, and PNG export.
+- Compare design variants with overlays, saved presets, draggable dB markers, and PNG export.
 - Keep RF simulation files local; no upload, telemetry, or external service is used.
 
 ![Touchstone S-parameter preview demo in VS Code showing passband presets, Sij trace selection, overlays, Z0 renormalization, and PNG export](media/s2p-preview-demo.gif)
@@ -22,10 +22,11 @@ Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF
 - Opens `.s1p`, `.s2p`, `.s3p`, and `.s4p` files as the default `S2P Preview` custom editor.
 - Opens in `Auto / Full file range` mode and highlights an editable passband.
 - Keeps `1-10 GHz` as the first configurable preset.
-- Adds and deletes view presets from the preview.
+- Adds, updates, and deletes view presets from the preview.
 - Renormalizes selected ports to editable per-port real `Z0, Ohm` values in single-file previews.
 - Exports the current chart area, including range indicator and legend, to PNG.
 - Shows editable preset-owned dB markers with optional per-marker metrics.
+- Refreshes open previews after external simulator or editor writes, with a configurable debounce.
 
 Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, and generic high-port `.sNp` visualization.
 
@@ -41,9 +42,9 @@ S2P: Preview Current File
 
 You can also right-click a `.s1p`, `.s2p`, `.s3p`, or `.s4p` file in Explorer and run the same command.
 To compare selected files, multi-select Touchstone files in Explorer, right-click, and run `S2P: Preview Selected Files Overlay`.
-From an open preview, use `Overlay files...` to pick Touchstone files from the same folder and open an overlay preview.
+From an open preview, use `Overlay files...` to pick Touchstone files from the same folder and add them to the same chart.
 Use the `Start GHz` and `Stop GHz` fields in the preview to update the shaded band and metrics interactively.
-Use the preset dropdown to activate a preset, save the current view as a new preset, or delete a preset with the `x` at the end of its row.
+Use the preset dropdown to activate a preset, save the current view as a new preset, update the active preset, or delete a preset with the `x` at the end of its row.
 Saved presets are user-level settings, so ranges, visible traces, and Z0 normalization apply across files and workspaces.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
 Use the `Sij` checkbox matrix to choose visible traces for multi-port files.
@@ -68,20 +69,24 @@ To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Edi
         "targetOhms": [50, 75]
       },
       "markers": [
-        { "label": "-3 dB", "db": -3 },
-        { "label": "-15 dB", "db": -15 },
-        { "label": "-20 dB", "db": -20 }
+        { "label": "m1", "db": -3 },
+        { "label": "m2", "db": -15 },
+        { "label": "m3", "db": -20 }
       ]
     }
   ],
   "s2pPreview.defaultPassbandPreset": "Auto / Full file range",
   "s2pPreview.markers.enabled": true,
   "s2pPreview.markers.editable": true,
-  "s2pPreview.markers.metrics.enabled": true
+  "s2pPreview.markers.metrics.enabled": true,
+  "s2pPreview.autoRefreshOnFileChange": true,
+  "s2pPreview.autoRefreshDebounceMs": 500
 }
 ```
 
 Marker lines are saved with presets. Use `s2pPreview.markers.enabled`, `s2pPreview.markers.editable`, and `s2pPreview.markers.metrics.enabled` to hide marker UI, lock marker editing, or hide marker metrics.
+
+Use `s2pPreview.autoRefreshOnFileChange` and `s2pPreview.autoRefreshDebounceMs` to control automatic preview refresh after external file writes.
 
 Preset add/delete actions update user settings by default. If the workspace already defines `s2pPreview.passbandPresets` or `s2pPreview.defaultPassbandPreset`, those actions update the workspace settings instead. Old range-only presets remain valid; presets without `traces`, `renormalize`, or `markers` use the file's default trace visibility, reference impedance, and default dB markers.
 
@@ -103,6 +108,7 @@ See the repository `LICENSE` for the full MPL-2.0 text and `NOTICE` for copyrigh
 
 - `dB`: decibel, a logarithmic unit used here for S-parameter magnitude.
 - `GHz`: gigahertz.
+- `auto-refresh`: automatic preview update after the source file or overlay files change on disk.
 - `mixed-mode`: a network-parameter representation that separates common-mode and differential-mode behavior.
 - `MPL`: Mozilla Public License.
 - `Open VSX`: the open extension registry used by VS Code-compatible editors.

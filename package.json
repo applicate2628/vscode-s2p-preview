@@ -1,7 +1,7 @@
 {
   "name": "vscode-s2p-preview",
   "displayName": "Touchstone S-Parameter Preview",
-  "description": "Preview and compare S1P, S2P, S3P, and S4P Touchstone S-parameter files with overlays, presets, Z0 renormalization, and PNG export.",
+  "description": "Preview S1P/S2P/S3P/S4P Touchstone S-parameter files with overlays, presets, Z0 renormalization, dB markers, live refresh, and PNG export.",
   "version": "0.0.21",
   "publisher": "applicate2628",
   "license": "MPL-2.0",
@@ -37,6 +37,9 @@
     "network-analyzer",
     "visualization",
     "overlay",
+    "passband",
+    "db markers",
+    "live refresh",
     "png export",
     "z0 renormalization"
   ],
