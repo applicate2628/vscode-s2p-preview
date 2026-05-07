@@ -4,11 +4,17 @@ export interface PassbandPreset {
   stopGHz: number;
   traces?: PassbandPresetTrace[];
   renormalize?: PassbandPresetRenormalize;
+  markers?: PassbandPresetMarker[];
 }
 
 export interface PassbandPresetTrace {
   toPort: number;
   fromPort: number;
+}
+
+export interface PassbandPresetMarker {
+  label: string;
+  db: number;
 }
 
 export interface PassbandPresetRenormalize {
@@ -27,6 +33,12 @@ export const AUTO_PASSBAND_LABEL = "Auto / Full file range";
 
 export const DEFAULT_PASSBAND_PRESETS: PassbandPreset[] = [
   { label: "1-10 GHz", startGHz: 1, stopGHz: 10 }
+];
+
+export const DEFAULT_DB_MARKERS: PassbandPresetMarker[] = [
+  { label: "-3 dB", db: -3 },
+  { label: "-15 dB", db: -15 },
+  { label: "-20 dB", db: -20 }
 ];
 
 export function normalizeDefaultPassbandLabel(presets: readonly PassbandPreset[], configuredDefault: string | undefined): string {
@@ -132,6 +144,40 @@ export function sanitizePresetRenormalize(value: unknown): PassbandPresetRenorma
   }
 
   return { selectedPorts, targetOhms };
+}
+
+export function sanitizePresetMarkers(value: unknown): PassbandPresetMarker[] {
+  if (!Array.isArray(value)) {
+    return cloneDefaultDbMarkers();
+  }
+
+  const markers: PassbandPresetMarker[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    const db = Number(item.db);
+    if (!Number.isFinite(db)) {
+      continue;
+    }
+
+    const rawLabel = typeof item.label === "string" ? item.label.trim() : "";
+    markers.push({
+      label: rawLabel || `${formatMarkerDb(db)} dB`,
+      db
+    });
+  }
+
+  return markers.length > 0 ? markers : cloneDefaultDbMarkers();
+}
+
+function cloneDefaultDbMarkers(): PassbandPresetMarker[] {
+  return DEFAULT_DB_MARKERS.map((marker) => ({ ...marker }));
+}
+
+function formatMarkerDb(db: number): string {
+  return Number(db).toFixed(3).replace(/\.?0+$/, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

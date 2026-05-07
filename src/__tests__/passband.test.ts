@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTO_PASSBAND_LABEL,
+  DEFAULT_DB_MARKERS,
   DEFAULT_PASSBAND_PRESETS,
   createAutoPassband,
   normalizeDefaultPassbandLabel,
+  sanitizePresetMarkers,
   sanitizePresetRenormalize,
   sanitizePresetTraces,
   upsertPassbandPreset,
@@ -85,6 +87,34 @@ test("sanitizes renormalization presets", () => {
     }),
     undefined
   );
+});
+
+test("default dB markers match the legacy guide lines", () => {
+  assert.deepEqual(DEFAULT_DB_MARKERS, [
+    { label: "-3 dB", db: -3 },
+    { label: "-15 dB", db: -15 },
+    { label: "-20 dB", db: -20 }
+  ]);
+});
+
+test("sanitizes preset dB markers", () => {
+  assert.deepEqual(
+    sanitizePresetMarkers([
+      { label: "Pass", db: -3 },
+      { label: "", db: -15 },
+      { label: "bad", db: Number.NaN },
+      { db: -20 },
+      "skip"
+    ]),
+    [
+      { label: "Pass", db: -3 },
+      { label: "-15 dB", db: -15 },
+      { label: "-20 dB", db: -20 }
+    ]
+  );
+
+  assert.deepEqual(sanitizePresetMarkers([{ label: "bad", db: Number.NaN }]), DEFAULT_DB_MARKERS);
+  assert.deepEqual(sanitizePresetMarkers(undefined), DEFAULT_DB_MARKERS);
 });
 
 test("upserts passband presets by label", () => {
