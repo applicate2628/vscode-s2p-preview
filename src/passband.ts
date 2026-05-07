@@ -36,9 +36,9 @@ export const DEFAULT_PASSBAND_PRESETS: PassbandPreset[] = [
 ];
 
 export const DEFAULT_DB_MARKERS: PassbandPresetMarker[] = [
-  { label: "-3 dB", db: -3 },
-  { label: "-15 dB", db: -15 },
-  { label: "-20 dB", db: -20 }
+  { label: "m1", db: -3 },
+  { label: "m2", db: -15 },
+  { label: "m3", db: -20 }
 ];
 
 export const MAX_DB_MARKERS = 10;
@@ -176,7 +176,7 @@ export function sanitizePresetMarkers(value: unknown): PassbandPresetMarker[] {
 
     const rawLabel = typeof item.label === "string" ? item.label.trim() : "";
     markers.push({
-      label: (rawLabel || `${formatMarkerDb(db)} dB`).slice(0, MAX_DB_MARKER_LABEL_LENGTH),
+      label: rawLabel.slice(0, MAX_DB_MARKER_LABEL_LENGTH),
       db
     });
     if (markers.length >= MAX_DB_MARKERS) {

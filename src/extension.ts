@@ -1155,12 +1155,13 @@ function renderMarkerSvg(
   editable: boolean
 ): string {
   const y = yCoord(marker.db, chart).toFixed(2);
-  const label = marker.label || `${formatDbLabel(marker.db)} dB`;
+  const label = marker.label;
   const dragAttrs = editable ? ` data-marker-index="${index}" tabindex="0"` : ` data-marker-index="${index}"`;
   return `
           <g class="db-marker" data-marker-index="${index}">
             <line class="db-marker-handle" x1="${chart.margin.left}" y1="${y}" x2="${chart.margin.left + chart.plotWidth}" y2="${y}"${dragAttrs} />
             <line class="db-marker-line" x1="${chart.margin.left}" y1="${y}" x2="${chart.margin.left + chart.plotWidth}" y2="${y}" />
+            <text class="db-marker-axis-label" x="${chart.margin.left + 8}" y="${(Number(y) - 5).toFixed(2)}">${escapeHtml(formatMarkerAxisLabel(marker.db))}</text>
             <text class="db-marker-label" x="${chart.margin.left + chart.plotWidth - 70}" y="${(Number(y) - 5).toFixed(2)}">${escapeHtml(label)}</text>
           </g>
   `;
@@ -1569,7 +1570,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       }
       const label = typeof marker?.label === "string" && marker.label.trim()
         ? marker.label.trim()
-        : formatDb(db) + " dB";
+        : "";
       return { label: label.slice(0, MARKER_LABEL_LIMIT), db };
     }
 
@@ -1598,12 +1599,13 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       }
       return markerState.markers.map((marker, index) => {
         const markerY = y(marker.db).toFixed(2);
-        const label = marker.label || formatDb(marker.db) + " dB";
+        const label = marker.label;
         const dragAttrs = markerSettings.editable ? ' data-marker-index="' + index + '" tabindex="0"' : ' data-marker-index="' + index + '"';
         return ''
           + '<g class="db-marker" data-marker-index="' + index + '">'
           + '<line class="db-marker-handle" x1="' + chart.marginLeft + '" y1="' + markerY + '" x2="' + (chart.marginLeft + chart.plotWidth) + '" y2="' + markerY + '"' + dragAttrs + ' />'
           + '<line class="db-marker-line" x1="' + chart.marginLeft + '" y1="' + markerY + '" x2="' + (chart.marginLeft + chart.plotWidth) + '" y2="' + markerY + '" />'
+          + '<text class="db-marker-axis-label" x="' + (chart.marginLeft + 8) + '" y="' + (Number(markerY) - 5).toFixed(2) + '">' + escapeXml(formatMarkerAxisLabel(marker.db)) + '</text>'
           + '<text class="db-marker-label" x="' + (chart.marginLeft + chart.plotWidth - 70) + '" y="' + (Number(markerY) - 5).toFixed(2) + '">' + escapeXml(label) + '</text>'
           + '</g>';
       }).join("");
@@ -1763,7 +1765,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           if (!markerSettings.enabled || !markerSettings.editable || markerState.markers.length >= MARKER_LIMIT) {
             return;
           }
-          markerState.markers.push({ label: "-30 dB", db: -30 });
+          markerState.markers.push({ label: "m" + (markerState.markers.length + 1), db: -30 });
           syncMarkerDom({ renderEditor: true });
         });
       }
@@ -2215,7 +2217,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           );
         }
         sections.push(
-          '<section class="marker-metric-group"><h3>' + escapeXml(marker.label || formatDb(marker.db) + ' dB') + '</h3>'
+          '<section class="marker-metric-group"><h3>' + escapeXml(marker.label) + '</h3>'
           + '<table><tbody>' + (rows.length > 0 ? rows.join("") : '<tr><td>No visible traces.</td></tr>') + '</tbody></table></section>'
         );
       });
@@ -2399,6 +2401,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function formatDb(value) {
       return Number(value).toFixed(3).replace(/\\.?0+$/, "");
+    }
+
+    function formatMarkerAxisLabel(value) {
+      return formatDb(value) + " dB";
     }
 
     function clearMetrics(message) {
@@ -2836,6 +2842,10 @@ function formatDbLabel(value: number): string {
   return fixed.replace(/\.?0+$/, "");
 }
 
+function formatMarkerAxisLabel(value: number): string {
+  return `${formatDbLabel(value)} dB`;
+}
+
 function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
   const nonce = getNonce();
   const scriptBlock = script ? `<script nonce="${nonce}">${script}</script>` : "";
@@ -3154,6 +3164,7 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
     .db-marker-line { stroke: var(--vscode-charts-purple, #8e75ff); stroke-width: 1.4; stroke-dasharray: 7 5; pointer-events: none; }
     .db-marker-handle { stroke: transparent; stroke-width: 14; cursor: ns-resize; }
     .db-marker-label { fill: var(--vscode-descriptionForeground, #6a737d); font-size: 12px; pointer-events: none; }
+    .db-marker-axis-label { fill: var(--vscode-descriptionForeground, #6a737d); font-size: 10px; pointer-events: none; opacity: 0.82; }
     .curve { fill: none; stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
     .chart-legend {
       height: var(--legend-height, 76px);

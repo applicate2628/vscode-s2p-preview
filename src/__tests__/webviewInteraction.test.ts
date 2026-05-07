@@ -122,6 +122,20 @@ test("chart renders axis grid separately from dB marker lines", () => {
   assert.doesNotMatch(extensionSource, /const guides = \[-3, -15, -20\]/);
 });
 
+test("marker names stay on lines and dB values render as smaller y-axis labels", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /class="db-marker-label"/);
+  assert.match(extensionSource, /class="db-marker-axis-label"/);
+  assert.match(extensionSource, /const label = marker\.label;/);
+  assert.match(extensionSource, /formatMarkerAxisLabel\(marker\.db\)/);
+  assert.match(extensionSource, /db-marker-axis-label" x="\$\{chart\.margin\.left \+ 8\}" y="\$\{\(Number\(y\) - 5\)\.toFixed\(2\)\}"/);
+  assert.match(extensionSource, /db-marker-axis-label" x="' \+ \(chart\.marginLeft \+ 8\) \+ '" y="' \+ \(Number\(markerY\) - 5\)\.toFixed\(2\)/);
+  assert.match(extensionSource, /\.db-marker-axis-label \{[\s\S]*font-size: 10px/);
+  assert.doesNotMatch(extensionSource, /marker\.label \|\| formatDb/);
+  assert.doesNotMatch(extensionSource, /marker\.label \|\| `\$\{formatDbLabel\(marker\.db\)\} dB`/);
+});
+
 test("marker editor supports add delete value editing and delegated dragging", () => {
   const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
 
@@ -135,6 +149,7 @@ test("marker editor supports add delete value editing and delegated dragging", (
   assert.match(extensionSource, /createSVGPoint\(\)/);
   assert.match(extensionSource, /getScreenCTM\(\)\.inverse\(\)/);
   assert.match(extensionSource, /setPointerCapture/);
+  assert.match(extensionSource, /markerState\.markers\.push\(\{ label: "m" \+ \(markerState\.markers\.length \+ 1\), db: -30 \}\)/);
 });
 
 test("marker live edits are bounded before rendering or posting", () => {
@@ -143,6 +158,7 @@ test("marker live edits are bounded before rendering or posting", () => {
   assert.match(extensionSource, /function sanitizeClientMarker\(marker\)/);
   assert.match(extensionSource, /function clampMarkerDb\(db\)/);
   assert.match(extensionSource, /Math\.min\(MARKER_DB_MAX, Math\.max\(MARKER_DB_MIN, db\)\)/);
+  assert.match(extensionSource, /const label = typeof marker\?\.label === "string"[\s\S]*: "";/);
   assert.match(extensionSource, /markerState\.markers\[dbIndex\] = normalized \|\| markerState\.markers\[dbIndex\];/);
   assert.match(extensionSource, /markerState\.markers\[labelIndex\] = normalized \|\| markerState\.markers\[labelIndex\];/);
   assert.match(extensionSource, /const db = clampMarkerDb\(markerDbFromPointerEvent\(event\)\);/);

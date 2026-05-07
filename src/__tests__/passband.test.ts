@@ -91,15 +91,15 @@ test("sanitizes renormalization presets", () => {
   );
 });
 
-test("default dB markers match the legacy guide lines", () => {
+test("default dB markers use short labels for common thresholds", () => {
   assert.deepEqual(DEFAULT_DB_MARKERS, [
-    { label: "-3 dB", db: -3 },
-    { label: "-15 dB", db: -15 },
-    { label: "-20 dB", db: -20 }
+    { label: "m1", db: -3 },
+    { label: "m2", db: -15 },
+    { label: "m3", db: -20 }
   ]);
 });
 
-test("sanitizes preset dB markers", () => {
+test("sanitizes preset dB markers without replacing empty labels with numbers", () => {
   assert.deepEqual(
     sanitizePresetMarkers([
       { label: "Pass", db: -3 },
@@ -110,8 +110,8 @@ test("sanitizes preset dB markers", () => {
     ]),
     [
       { label: "Pass", db: -3 },
-      { label: "-15 dB", db: -15 },
-      { label: "-20 dB", db: -20 }
+      { label: "", db: -15 },
+      { label: "", db: -20 }
     ]
   );
 
