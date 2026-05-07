@@ -55,12 +55,33 @@ if (updated !== text) {
 NODE
 fi
 
+if [[ -f CHANGELOG.md ]]; then
+  NEW_VERSION="$new_version" node <<'NODE'
+const fs = require("node:fs");
+
+const newVersion = process.env.NEW_VERSION;
+const changelogPath = "CHANGELOG.md";
+const text = fs.readFileSync(changelogPath, "utf8");
+const updated = text.replace(/^## Unreleased\s*$/m, `## ${newVersion}`);
+
+if (updated !== text) {
+  fs.writeFileSync(changelogPath, updated);
+} else {
+  console.log("CHANGELOG.md has no '## Unreleased' section to finalize.");
+}
+NODE
+fi
+
 npm test
 npm run package
 npm audit
 git diff --check
 
-git add package.json package-lock.json README.md
+files_to_stage=(package.json package-lock.json README.md)
+if [[ -f CHANGELOG.md ]]; then
+  files_to_stage+=(CHANGELOG.md)
+fi
+git add "${files_to_stage[@]}"
 if [[ -z "$(git diff --cached --name-only)" ]]; then
   echo "No version bump changes were staged." >&2
   exit 1

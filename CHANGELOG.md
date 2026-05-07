@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Updated Marketplace and Open VSX description metadata, keywords, and changelog packaging.
+- Fixed dB marker inputs so incomplete negative typing such as `-` is not overwritten while editing.
+- Increased the editable dB marker range to `-200..200 dB`.
+
 ## 0.0.21
 
 - Added editable preset-owned dB markers with short default labels `m1`, `m2`, and `m3`.
@@ -7,7 +13,6 @@
 - Added background chart grid lines based on normal axis ticks.
 - Added automatic preview refresh when source or overlay Touchstone files change on disk.
 - Improved high-resolution PNG export quality.
-- Increased the editable dB marker range to `-200..200 dB`.
 - Improved overlay trace legends, unique overlay colors, and multi-file overlay behavior.
 - Added preset persistence for visible `Sij` traces, selected-port `Z0` renormalization, and dB markers.
 - Added support for Touchstone `.s1p`, `.s2p`, `.s3p`, and `.s4p` S-parameter previews, including Touchstone 2.0/2.1 keyword blocks with full matrix data.

@@ -64,12 +64,27 @@ if (Test-Path -LiteralPath $readmePath) {
     }
 }
 
+$changelogPath = "CHANGELOG.md"
+if (Test-Path -LiteralPath $changelogPath) {
+    $changelog = Get-Content -Raw -LiteralPath $changelogPath
+    $updated = [regex]::Replace($changelog, "(?m)^## Unreleased\s*$", "## $newVersion", 1)
+    if ($updated -ne $changelog) {
+        Set-Content -LiteralPath $changelogPath -Value $updated -NoNewline
+    } else {
+        Write-Host "CHANGELOG.md has no '## Unreleased' section to finalize."
+    }
+}
+
 Invoke-Checked "npm" @("test")
 Invoke-Checked "npm" @("run", "package")
 Invoke-Checked "npm" @("audit")
 Invoke-Checked "git" @("diff", "--check")
 
-Invoke-Checked "git" @("add", "package.json", "package-lock.json", "README.md")
+$filesToStage = @("package.json", "package-lock.json", "README.md")
+if (Test-Path -LiteralPath $changelogPath) {
+    $filesToStage += $changelogPath
+}
+Invoke-Checked "git" @("add", $filesToStage)
 $staged = (& git diff --cached --name-only)
 if (-not $staged) {
     throw "No version bump changes were staged."
