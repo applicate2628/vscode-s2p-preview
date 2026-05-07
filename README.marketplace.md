@@ -25,7 +25,7 @@ Preview `.s1p`, `.s2p`, `.s3p`, and `.s4p` Touchstone `S`-parameter files for RF
 - Adds and deletes view presets from the preview.
 - Renormalizes selected ports to editable per-port real `Z0, Ohm` values in single-file previews.
 - Exports the current chart area, including range indicator and legend, to PNG.
-- Shows guide lines at `-3 dB`, `-15 dB`, and `-20 dB`.
+- Shows editable preset-owned dB markers with optional per-marker metrics.
 
 Unsupported for the current release: `Y`/`Z`/`G`/`H` parameter conversion, mixed-mode transformation UI, and generic high-port `.sNp` visualization.
 
@@ -47,6 +47,7 @@ Use the preset dropdown to activate a preset, save the current view as a new pre
 Saved presets are user-level settings, so ranges, visible traces, and Z0 normalization apply across files and workspaces.
 To return to the active preset after manual edits, open the dropdown and select that preset again.
 Use the `Sij` checkbox matrix to choose visible traces for multi-port files.
+Drag dB marker lines or edit them in the marker list; marker values are saved with presets.
 Use `Normalize Z0, Ohm` and the port checkboxes to renormalize selected ports; the initial values come from the Touchstone option line or `[Reference]` block.
 Use `Export PNG...` to save the current chart area, including the passband range indicator, plotted traces, and visible legend. PNG export uses high-resolution rasterization for sharper lines and labels.
 
@@ -65,14 +66,24 @@ To inspect raw Touchstone text, use `Reopen Editor With...` and choose `Text Edi
       "renormalize": {
         "selectedPorts": [false, true],
         "targetOhms": [50, 75]
-      }
+      },
+      "markers": [
+        { "label": "-3 dB", "db": -3 },
+        { "label": "-15 dB", "db": -15 },
+        { "label": "-20 dB", "db": -20 }
+      ]
     }
   ],
-  "s2pPreview.defaultPassbandPreset": "Auto / Full file range"
+  "s2pPreview.defaultPassbandPreset": "Auto / Full file range",
+  "s2pPreview.markers.enabled": true,
+  "s2pPreview.markers.editable": true,
+  "s2pPreview.markers.metrics.enabled": true
 }
 ```
 
-Preset add/delete actions update user settings by default. If the workspace already defines `s2pPreview.passbandPresets` or `s2pPreview.defaultPassbandPreset`, those actions update the workspace settings instead. Old range-only presets remain valid; presets without `traces` or `renormalize` use the file's default trace visibility and reference impedance.
+Marker lines are saved with presets. Use `s2pPreview.markers.enabled`, `s2pPreview.markers.editable`, and `s2pPreview.markers.metrics.enabled` to hide marker UI, lock marker editing, or hide marker metrics.
+
+Preset add/delete actions update user settings by default. If the workspace already defines `s2pPreview.passbandPresets` or `s2pPreview.defaultPassbandPreset`, those actions update the workspace settings instead. Old range-only presets remain valid; presets without `traces`, `renormalize`, or `markers` use the file's default trace visibility, reference impedance, and default dB markers.
 
 ## Privacy And Security
 
