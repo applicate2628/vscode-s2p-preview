@@ -957,6 +957,7 @@ function renderControls(
 
 function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: PassbandPreset): string {
   const initial = initialRenormalizeState(impedance, preset);
+  const z0Linked = initialZ0TargetsLinked(initial);
   const ports = impedance.referenceOhms.map((sourceOhms, index) => `
         <div class="port-target">
           <label class="port-target-toggle">
@@ -970,7 +971,10 @@ function renderImpedanceControls(impedance: PreviewImpedanceModel, preset: Passb
   return `
       <section class="z0-card">
       <fieldset class="z0-ports">
-        <legend>Z0 Renormalization</legend>
+        <legend class="z0-legend">
+          <span>Z0 Renormalization</span>
+          <button id="z0-link-button" class="z0-link-button ${z0Linked ? "active" : ""}" type="button" aria-label="Link Z0 target inputs" aria-pressed="${z0Linked}" data-z0-linked="${z0Linked}" title="Link Z0 target inputs">Link</button>
+        </legend>
         <div class="port-target-row">
           ${ports}
         </div>
@@ -1001,6 +1005,21 @@ function initialRenormalizeState(
   }
 
   return { selectedPorts, targetOhms };
+}
+
+function initialZ0TargetsLinked(initial: PassbandPresetRenormalize): boolean {
+  const activeIndices = initial.selectedPorts
+    .map((selected, index) => selected ? index : -1)
+    .filter((index) => index >= 0);
+  const indices = activeIndices.length > 0
+    ? activeIndices
+    : initial.targetOhms.map((_, index) => index);
+  if (indices.length <= 1) {
+    return true;
+  }
+
+  const first = initial.targetOhms[indices[0]];
+  return indices.every((index) => Math.abs(initial.targetOhms[index] - first) < 1e-9);
 }
 
 function effectiveInitialReferenceOhms(
@@ -1268,6 +1287,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const portInputs = Array.from(document.querySelectorAll("[data-z0-port]"));
     const targetOhmsInputs = Array.from(document.querySelectorAll("[data-z0-target]"));
     const effectiveZ0 = document.getElementById("effective-z0");
+    const z0LinkButton = document.getElementById("z0-link-button");
+    let z0InputsLinked = z0LinkButton ? z0LinkButton.dataset.z0Linked === "true" : false;
+    let previousZ0TargetValues = targetOhmsInputs.map(numberInputValue);
 
     startInput.min = String(chart.minFreq);
     startInput.max = String(chart.maxFreq);
@@ -1286,81 +1308,94 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           event.preventDefault();
           event.stopPropagation();
           input.focus({ preventScroll: true });
-          if (applyNumberInputWheelStep(input, event.deltaY < 0 ? 1 : -1)) {
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-          }
+          stepNumberInputWithWheel(input, event.deltaY < 0 ? 1 : -1);
         }, { passive: false });
       }
     }
 
-    function applyNumberInputWheelStep(input, direction) {
-      const current = Number(input.value);
-      const fallback = Number(input.getAttribute("value"));
-      const base = Number.isFinite(current)
-        ? current
-        : Number.isFinite(fallback)
-          ? fallback
-          : 0;
-      const step = numberInputWheelStep(input);
-      const min = finiteNumberInputAttribute(input, "min");
-      const max = finiteNumberInputAttribute(input, "max");
-      let next = direction > 0
-        ? Math.floor(base / step) * step + step
-        : Math.ceil(base / step) * step - step;
-
-      if (Number.isFinite(min)) {
-        next = Math.max(min, next);
-      }
-      if (Number.isFinite(max)) {
-        next = Math.min(max, next);
-      }
-
-      const value = formatNumberInputWheelValue(input, next);
-      if (value === input.value) {
+    function stepNumberInputWithWheel(input, direction) {
+      const previousValue = input.value;
+      try {
+        if (direction > 0) {
+          input.stepUp();
+        } else {
+          input.stepDown();
+        }
+      } catch {
         return false;
       }
 
-      input.value = value;
+      if (input.value === previousValue) {
+        return false;
+      }
+
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       return true;
     }
 
-    function numberInputWheelStep(input) {
-      const rawStep = input.getAttribute("step");
-      const parsed = Number(rawStep);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    function numberInputValue(input) {
+      const value = Number(input.value);
+      return Number.isFinite(value) ? value : Number.NaN;
     }
 
-    function finiteNumberInputAttribute(input, name) {
-      const parsed = Number(input.getAttribute(name));
-      return Number.isFinite(parsed) ? parsed : Number.NaN;
+    function z0TargetIndex(input) {
+      const index = Number(input.dataset.z0Target);
+      return Number.isInteger(index) ? index : -1;
     }
 
-    function formatNumberInputWheelValue(input, value) {
-      const min = finiteNumberInputAttribute(input, "min");
-      const isAtMin = Number.isFinite(min) && Math.abs(value - min) < 1e-9;
-      const decimals = Math.min(6, Math.max(
-        decimalPlaces(input.getAttribute("step") || ""),
-        isAtMin ? decimalPlaces(input.getAttribute("min") || "") : 0
-      ));
-      const scale = 10 ** decimals;
-      const rounded = Math.round(value * scale) / scale;
-      return decimals > 0
-        ? rounded.toFixed(decimals).replace(/\\.?0+$/, "")
-        : String(Math.round(rounded));
+    function syncPreviousZ0TargetValues() {
+      previousZ0TargetValues = targetOhmsInputs.map(numberInputValue);
     }
 
-    function decimalPlaces(value) {
-      const text = String(value).toLowerCase();
-      if (!text || text === "any" || !Number.isFinite(Number(text))) {
-        return 0;
+    function formatZ0TargetValue(value) {
+      return Number(value).toFixed(6).replace(/\\.?0+$/, "");
+    }
+
+    function setZ0InputsLinked(linked) {
+      z0InputsLinked = linked;
+      if (!z0LinkButton) {
+        return;
       }
 
-      const parts = text.split("e");
-      const mantissa = parts[0];
-      const exponent = parts.length > 1 ? Number(parts[1]) : 0;
-      const pointIndex = mantissa.indexOf(".");
-      const mantissaDecimals = pointIndex === -1 ? 0 : mantissa.length - pointIndex - 1;
-      return Math.max(0, mantissaDecimals - exponent);
+      z0LinkButton.dataset.z0Linked = String(linked);
+      z0LinkButton.setAttribute("aria-pressed", String(linked));
+      z0LinkButton.classList.toggle("active", linked);
+      z0LinkButton.title = linked ? "Unlink Z0 target inputs" : "Link Z0 target inputs";
+    }
+
+    function synchronizeZ0TargetInputs(sourceInput, deltaOhms) {
+      for (const input of targetOhmsInputs) {
+        if (input !== sourceInput && z0TargetPortSelected(input)) {
+          const index = z0TargetIndex(input);
+          const current = numberInputValue(input);
+          const previous = index >= 0 ? previousZ0TargetValues[index] : Number.NaN;
+          const base = Number.isFinite(current) ? current : previous;
+          if (Number.isFinite(base)) {
+            input.value = formatZ0TargetValue(base + deltaOhms);
+          }
+        }
+      }
+    }
+
+    function z0TargetPortSelected(input) {
+      const index = z0TargetIndex(input);
+      return index >= 0 && portInputs[index]?.checked === true;
+    }
+
+    function linkedZ0TargetInputs() {
+      const selected = targetOhmsInputs.filter(z0TargetPortSelected);
+      return selected.length > 0 ? selected : targetOhmsInputs;
+    }
+
+    function refreshZ0LinkFromTargets() {
+      if (targetOhmsInputs.length <= 1) {
+        setZ0InputsLinked(true);
+        return;
+      }
+
+      const values = linkedZ0TargetInputs().map((input) => Number(input.value));
+      const first = values[0];
+      setZ0InputsLinked(values.every((value) => Number.isFinite(value) && Math.abs(value - first) < 1e-9));
     }
 
     function x(freqGHz) {
@@ -1826,6 +1861,8 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         const index = Number(input.dataset.z0Port);
         input.checked = selectedPorts[index] === true;
       }
+      syncPreviousZ0TargetValues();
+      refreshZ0LinkFromTargets();
       return true;
     }
 
@@ -2048,17 +2085,30 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     for (const input of traceInputs) {
       input.addEventListener("change", updateTraceVisibility);
     }
+    function handleZ0TargetInput(input) {
+      const index = z0TargetIndex(input);
+      const currentValue = numberInputValue(input);
+      const previousValue = index >= 0 ? previousZ0TargetValues[index] : Number.NaN;
+      const deltaOhms = currentValue - previousValue;
+      if (z0InputsLinked && z0TargetPortSelected(input) && Number.isFinite(deltaOhms)) {
+        synchronizeZ0TargetInputs(input, deltaOhms);
+      }
+      syncPreviousZ0TargetValues();
+      updateImpedancePreview();
+    }
     for (const input of targetOhmsInputs) {
       input.addEventListener("input", () => {
-        const index = Number(input.dataset.z0Target);
-        if (Number.isInteger(index) && portInputs[index]) {
-          portInputs[index].checked = true;
-        }
-        updateImpedancePreview();
+        handleZ0TargetInput(input);
       });
     }
     for (const input of portInputs) {
       input.addEventListener("change", updateImpedancePreview);
+    }
+    if (z0LinkButton) {
+      z0LinkButton.addEventListener("click", () => {
+        setZ0InputsLinked(!z0InputsLinked);
+        syncPreviousZ0TargetValues();
+      });
     }
     presetMenuButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -2366,6 +2416,30 @@ function htmlShell(webview: vscode.Webview, body: string, script = ""): string {
       color: var(--vscode-foreground);
       font-size: 13px;
       font-weight: 600;
+    }
+    .z0-legend {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .z0-link-button {
+      padding: 2px 7px;
+      color: var(--vscode-button-secondaryForeground);
+      background: var(--vscode-button-secondaryBackground);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      font: inherit;
+      font-size: 11px;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+    .z0-link-button:hover {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    }
+    .z0-link-button.active {
+      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-background);
+      border-color: var(--vscode-button-background);
     }
     .section-note {
       margin: 4px 0 10px;
