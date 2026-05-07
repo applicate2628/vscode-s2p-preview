@@ -1574,6 +1574,15 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       return { label: label.slice(0, MARKER_LABEL_LIMIT), db };
     }
 
+    function parseMarkerDbInput(input) {
+      const raw = input.value.trim();
+      if (input.validity.badInput || raw === "" || raw === "-" || raw === "+" || raw === "." || raw === "-." || raw === "+.") {
+        return undefined;
+      }
+      const db = Number(raw);
+      return Number.isFinite(db) ? clampMarkerDb(db) : undefined;
+    }
+
     function clampMarkerDb(db) {
       if (!Number.isFinite(db)) {
         return Number.NaN;
@@ -1779,14 +1788,10 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         const dbIndex = Number(event.target.dataset.markerDb);
         const labelIndex = Number(event.target.dataset.markerLabel);
         if (Number.isInteger(dbIndex) && markerState.markers[dbIndex]) {
-          const db = clampMarkerDb(Number(event.target.value));
-          if (Number.isFinite(db)) {
+          const db = parseMarkerDbInput(event.target);
+          if (typeof db === "number") {
             const normalized = sanitizeClientMarker({ ...markerState.markers[dbIndex], db });
             markerState.markers[dbIndex] = normalized || markerState.markers[dbIndex];
-            event.target.value = formatDb(markerState.markers[dbIndex].db);
-            if (!markerState.markers[dbIndex].label) {
-              markerState.markers[dbIndex].label = formatDb(db) + " dB";
-            }
             syncMarkerDom();
           }
         }

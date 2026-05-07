@@ -164,6 +164,18 @@ test("marker live edits are bounded before rendering or posting", () => {
   assert.match(extensionSource, /const db = clampMarkerDb\(markerDbFromPointerEvent\(event\)\);/);
 });
 
+test("marker dB inputs allow incomplete negative typing before committing", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+  const inputHandler = extensionSource.match(/markerEditorList\.addEventListener\("input", \(event\) => \{[\s\S]*?\n      \}\);/);
+
+  assert.ok(inputHandler, "Expected marker editor input handler.");
+  assert.match(extensionSource, /function parseMarkerDbInput\(input\)/);
+  assert.match(extensionSource, /input\.validity\.badInput/);
+  assert.match(extensionSource, /raw === "-"/);
+  assert.match(inputHandler[0], /const db = parseMarkerDbInput\(event\.target\);/);
+  assert.doesNotMatch(inputHandler[0], /event\.target\.value = formatDb/);
+});
+
 test("marker state follows selected presets and marker feature settings", () => {
   const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
   const settingsHandler = extensionSource.match(/if \(message\.type === "settingsUpdated"\) \{[\s\S]*?\n      \}/);
