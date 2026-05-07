@@ -5,6 +5,10 @@ import {
   AUTO_PASSBAND_LABEL,
   DEFAULT_DB_MARKERS,
   DEFAULT_PASSBAND_PRESETS,
+  MAX_DB_MARKER_LABEL_LENGTH,
+  MAX_DB_MARKERS,
+  MAX_DB_MARKER_VALUE,
+  MIN_DB_MARKER_VALUE,
   createAutoPassband,
   normalizeDefaultPassbandLabel,
   sanitizePresetMarkers,
@@ -144,11 +148,16 @@ export function activate(context: vscode.ExtensionContext): void {
         refreshPreviewAutoRefreshWatchers();
       }
       if (
-        event.affectsConfiguration("s2pPreview.passbandPresets")
-        || event.affectsConfiguration("s2pPreview.defaultPassbandPreset")
-        || event.affectsConfiguration("s2pPreview.markers.enabled")
+        event.affectsConfiguration("s2pPreview.markers.enabled")
         || event.affectsConfiguration("s2pPreview.markers.editable")
         || event.affectsConfiguration("s2pPreview.markers.metrics.enabled")
+      ) {
+        refreshPreviewPanelsFromState();
+        return;
+      }
+      if (
+        event.affectsConfiguration("s2pPreview.passbandPresets")
+        || event.affectsConfiguration("s2pPreview.defaultPassbandPreset")
       ) {
         void broadcastPassbandSettings();
       }
@@ -467,7 +476,10 @@ async function addPresetFromWebview(
   if (presetRenormalize) {
     nextPreset.renormalize = presetRenormalize;
   }
-  nextPreset.markers = sanitizePresetMarkers(markers);
+  const presetMarkers = Array.isArray(markers) ? sanitizePresetMarkers(markers) : activePreset?.markers;
+  if (presetMarkers) {
+    nextPreset.markers = presetMarkers;
+  }
   const result = upsertPassbandPreset(settings.presets, nextPreset);
   await updatePassbandSettings(
     panel,
@@ -586,7 +598,7 @@ async function updatePassbandSettings(
 }
 
 async function broadcastPassbandSettings(statusPanel?: vscode.WebviewPanel, status?: string): Promise<void> {
-  await broadcastSettingsUpdated(activePreviewPanels, getPassbandSettings(), statusPanel, status);
+  await broadcastSettingsUpdated(activePreviewPanels, webviewPassbandSettings(getPassbandSettings()), statusPanel, status);
 }
 
 async function renormalizeFromWebview(
@@ -658,6 +670,13 @@ function disposePreviewFileWatchers(panel: vscode.WebviewPanel): void {
 function refreshPreviewAutoRefreshWatchers(): void {
   for (const [panel, state] of activePreviewDocuments) {
     updatePreviewFileWatchers(panel, state);
+  }
+}
+
+function refreshPreviewPanelsFromState(): void {
+  for (const [panel, state] of activePreviewDocuments) {
+    const model = buildPreviewModelWithOverlays(state.doc, state.fileLabel, state.overlays);
+    panel.webview.html = renderPreviewHtml(panel.webview, model, getPassbandSettings(), { canPickOverlay: true });
   }
 }
 
@@ -1075,7 +1094,7 @@ function renderChart(series: ChartSeries[], defaultPreset: PassbandPreset, marke
   const visibleStop = Math.min(defaultPreset.stopGHz, chart.maxFreq);
   const passbandX = visibleStart < visibleStop ? xCoord(visibleStart, chart) : xCoord(defaultPreset.startGHz, chart);
   const passbandWidth = visibleStart < visibleStop ? xCoord(visibleStop, chart) - passbandX : 0;
-  const markers = sanitizePresetMarkers(defaultPreset.markers);
+  const markers = markerSettings.enabled ? sanitizePresetMarkers(defaultPreset.markers) : [];
   const hasOverlaySeries = series.some((item) => item.cssClass.includes("overlay-line"));
   const legendGroups = hasOverlaySeries ? legendGroupsForSeries(series) : [];
   const showSeriesLegend = hasOverlaySeries || series.length <= 4;
@@ -1155,7 +1174,7 @@ function renderMarkerEditor(markers: readonly PassbandPresetMarker[], markerSett
         <div id="marker-editor-list" class="marker-editor-list">
           ${markers.map((marker, index) => renderMarkerEditorRow(marker, index, editable)).join("")}
         </div>
-        ${editable ? `<button id="add-marker-button" class="secondary-action marker-add-button" type="button">+ Add marker</button>` : ""}
+        <button id="add-marker-button" class="secondary-action marker-add-button" type="button"${editable ? "" : " hidden disabled"}>+ Add marker</button>
       </div>
   `;
 }
@@ -1319,17 +1338,20 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
   const chart = chartGeometry(model.series);
   const metricRows = model.metricRows ?? [];
   const metricRowsJson = jsonForScript(metricRows);
-  const seriesRowsJson = jsonForScript(model.series.map((item, index) => ({
-    index,
-    label: item.label,
-    selector: item.selector,
-    defaultVisible: item.defaultVisible,
-    rows: item.rows
-  })));
+  const markerMetricSeriesRows = settings.markers.enabled && settings.markers.metricsEnabled
+    ? model.series.map((item, index) => ({
+      index,
+      label: item.label,
+      selector: item.selector,
+      defaultVisible: item.defaultVisible,
+      rows: item.rows
+    }))
+    : [];
+  const seriesRowsJson = jsonForScript(markerMetricSeriesRows);
   const impedanceJson = jsonForScript(model.impedance);
-  const settingsJson = jsonForScript(settings);
+  const settingsJson = jsonForScript(webviewPassbandSettings(settings));
   const fileLabelJson = jsonForScript(model.fileLabel);
-  const initialMarkersJson = jsonForScript(sanitizePresetMarkers(resolveInitialPassband(model, settings).markers));
+  const initialMarkersJson = jsonForScript(settings.markers.enabled ? sanitizePresetMarkers(resolveInitialPassband(model, settings).markers) : []);
   const defaultMarkersJson = jsonForScript(DEFAULT_DB_MARKERS);
   const hasMetricRows = model.metricRows ? "true" : "false";
 
@@ -1338,21 +1360,25 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     const AUTO_PASSBAND_LABEL = ${jsonForScript(AUTO_PASSBAND_LABEL)};
     const METRICS_UNAVAILABLE = "2-port passband metrics are not available for this file.";
     const metricRows = ${metricRowsJson};
-    const seriesRows = ${seriesRowsJson};
+    const markerMetricSeriesRows = ${seriesRowsJson};
     const impedance = ${impedanceJson};
     const exportSourceLabel = ${fileLabelJson};
     const DEFAULT_DB_MARKERS = ${defaultMarkersJson};
-    const MARKER_LIMIT = 10;
+    const MARKER_LIMIT = ${MAX_DB_MARKERS};
+    const MARKER_LABEL_LIMIT = ${MAX_DB_MARKER_LABEL_LENGTH};
+    const MARKER_DB_MIN = ${MIN_DB_MARKER_VALUE};
+    const MARKER_DB_MAX = ${MAX_DB_MARKER_VALUE};
     const hasMetricRows = ${hasMetricRows};
     const MIN_PNG_EXPORT_SCALE = ${MIN_PNG_EXPORT_SCALE};
     const MAX_PNG_EXPORT_SCALE = ${MAX_PNG_EXPORT_SCALE};
     const MAX_PNG_EXPORT_EDGE = ${MAX_PNG_EXPORT_EDGE};
     const MAX_PNG_EXPORT_PIXELS = ${MAX_PNG_EXPORT_PIXELS};
     let currentMetricRows = metricRows;
-    let currentSeriesRows = seriesRows;
     let settings = ${settingsJson};
     const markerSettings = settings.markers || { enabled: true, editable: true, metricsEnabled: true };
-    let activePresetLabel = settings.defaultPresetLabel;
+    const seriesRows = markerSettings.enabled && markerSettings.metricsEnabled ? markerMetricSeriesRows : [];
+    let currentSeriesRows = seriesRows;
+    let activePresetLabel = initialActivePresetLabel();
     let markerState = { markers: sanitizeClientMarkers(${initialMarkersJson}) };
     const chart = {
       minFreq: ${chart.minFreq},
@@ -1399,19 +1425,19 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     installNumberInputWheelGuard();
 
     function installNumberInputWheelGuard() {
-      const numberInputs = Array.from(document.querySelectorAll("input[type=number]"));
-      for (const input of numberInputs) {
-        input.addEventListener("wheel", (event) => {
-          if (event.deltaY === 0) {
-            return;
-          }
+      document.addEventListener("wheel", (event) => {
+        const input = event.target instanceof HTMLInputElement && event.target.type === "number"
+          ? event.target
+          : null;
+        if (!input || event.deltaY === 0) {
+          return;
+        }
 
-          event.preventDefault();
-          event.stopPropagation();
-          input.focus({ preventScroll: true });
-          stepNumberInputWithWheel(input, event.deltaY < 0 ? 1 : -1);
-        }, { passive: false });
-      }
+        event.preventDefault();
+        event.stopPropagation();
+        input.focus({ preventScroll: true });
+        stepNumberInputWithWheel(input, event.deltaY < 0 ? 1 : -1);
+      }, { passive: false });
     }
 
     function stepNumberInputWithWheel(input, direction) {
@@ -1517,23 +1543,41 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function sanitizeClientMarkers(markers) {
       const source = Array.isArray(markers) ? markers : DEFAULT_DB_MARKERS;
+      if (Array.isArray(markers) && markers.length === 0) {
+        return [];
+      }
       const sanitized = [];
       for (const marker of source) {
         if (!marker || sanitized.length >= MARKER_LIMIT) {
           continue;
         }
-        const db = Number(marker.db);
-        if (!Number.isFinite(db)) {
+        const normalized = sanitizeClientMarker(marker);
+        if (!normalized) {
           continue;
         }
-        const label = typeof marker.label === "string" && marker.label.trim()
-          ? marker.label.trim()
-          : formatDb(db) + " dB";
-        sanitized.push({ label, db });
+        sanitized.push(normalized);
       }
       return sanitized.length > 0
         ? sanitized
         : DEFAULT_DB_MARKERS.map((marker) => ({ label: marker.label, db: marker.db }));
+    }
+
+    function sanitizeClientMarker(marker) {
+      const db = clampMarkerDb(Number(marker?.db));
+      if (!Number.isFinite(db)) {
+        return undefined;
+      }
+      const label = typeof marker?.label === "string" && marker.label.trim()
+        ? marker.label.trim()
+        : formatDb(db) + " dB";
+      return { label: label.slice(0, MARKER_LABEL_LIMIT), db };
+    }
+
+    function clampMarkerDb(db) {
+      if (!Number.isFinite(db)) {
+        return Number.NaN;
+      }
+      return Math.min(MARKER_DB_MAX, Math.max(MARKER_DB_MIN, db));
     }
 
     function applyMarkerSettings(next) {
@@ -1624,6 +1668,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
 
     function updateMarkerAddButton() {
       if (addMarkerButton) {
+        addMarkerButton.hidden = !markerSettings.enabled || !markerSettings.editable;
         addMarkerButton.disabled = !markerSettings.enabled || !markerSettings.editable || markerState.markers.length >= MARKER_LIMIT;
       }
     }
@@ -1700,7 +1745,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     }
 
     function updateMarkerFromPointer(event, index) {
-      const db = markerDbFromPointerEvent(event);
+      const db = clampMarkerDb(markerDbFromPointerEvent(event));
       if (!Number.isFinite(db) || !markerState.markers[index]) {
         return;
       }
@@ -1732,9 +1777,11 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         const dbIndex = Number(event.target.dataset.markerDb);
         const labelIndex = Number(event.target.dataset.markerLabel);
         if (Number.isInteger(dbIndex) && markerState.markers[dbIndex]) {
-          const db = Number(event.target.value);
+          const db = clampMarkerDb(Number(event.target.value));
           if (Number.isFinite(db)) {
-            markerState.markers[dbIndex].db = db;
+            const normalized = sanitizeClientMarker({ ...markerState.markers[dbIndex], db });
+            markerState.markers[dbIndex] = normalized || markerState.markers[dbIndex];
+            event.target.value = formatDb(markerState.markers[dbIndex].db);
             if (!markerState.markers[dbIndex].label) {
               markerState.markers[dbIndex].label = formatDb(db) + " dB";
             }
@@ -1742,7 +1789,9 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           }
         }
         if (Number.isInteger(labelIndex) && markerState.markers[labelIndex]) {
-          markerState.markers[labelIndex].label = event.target.value;
+          const normalized = sanitizeClientMarker({ ...markerState.markers[labelIndex], label: event.target.value });
+          markerState.markers[labelIndex] = normalized || markerState.markers[labelIndex];
+          event.target.value = markerState.markers[labelIndex].label;
           syncMarkerDom();
         }
       });
@@ -2329,15 +2378,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
         return [];
       }
 
-      return markerState.markers
-        .map((marker) => {
-          const db = Number(marker.db);
-          const label = typeof marker.label === "string" && marker.label.trim()
-            ? marker.label.trim()
-            : formatDb(db) + " dB";
-          return { label, db };
-        })
-        .filter((marker) => Number.isFinite(marker.db));
+      return sanitizeClientMarkers(markerState.markers);
     }
 
     function linePoints(rows) {
@@ -2452,7 +2493,7 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
           activePresetLabel,
           traces: currentTracePreset(),
           renormalize: currentRenormalizePreset(),
-          markers: currentMarkerPreset()
+          markers: markerSettings.enabled ? currentMarkerPreset() : undefined
         });
       });
       presetMenu.appendChild(addButton);
@@ -2466,8 +2507,44 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
       presetMenuButton.title = "Preset: " + preset.label + " (" + range + ")";
     }
 
+    function nextActivePresetLabel(previousActiveLabel, previousDefaultLabel) {
+      if (settings.defaultPresetLabel !== previousDefaultLabel) {
+        return settings.defaultPresetLabel;
+      }
+      if (previousActiveLabel === AUTO_PASSBAND_LABEL) {
+        return AUTO_PASSBAND_LABEL;
+      }
+      if (settings.presets.some((preset) => preset.label === previousActiveLabel)) {
+        return previousActiveLabel;
+      }
+      return settings.defaultPresetLabel;
+    }
+
+    function initialActivePresetLabel() {
+      const state = vscode.getState ? vscode.getState() : undefined;
+      const label = state && typeof state.activePresetLabel === "string"
+        ? state.activePresetLabel
+        : settings.defaultPresetLabel;
+      if (label === AUTO_PASSBAND_LABEL || settings.presets.some((preset) => preset.label === label)) {
+        return label;
+      }
+      return settings.defaultPresetLabel;
+    }
+
+    function persistWebviewState() {
+      if (!vscode.setState) {
+        return;
+      }
+      const previous = vscode.getState ? vscode.getState() : undefined;
+      vscode.setState({
+        ...(previous && typeof previous === "object" ? previous : {}),
+        activePresetLabel
+      });
+    }
+
     function applyPreset(preset, persistDefault) {
       activePresetLabel = preset.label;
+      persistWebviewState();
       startInput.value = String(preset.startGHz);
       stopInput.value = String(preset.stopGHz);
       applyTracePreset(preset.traces);
@@ -2601,9 +2678,11 @@ function renderClientScript(model: PreviewModel, settings: PassbandSettings): st
     window.addEventListener("message", (event) => {
       const message = event.data;
       if (message.type === "settingsUpdated") {
+        const previousActivePresetLabel = activePresetLabel;
+        const previousDefaultPresetLabel = settings.defaultPresetLabel;
         settings = message.settings;
         applyMarkerSettings(settings.markers);
-        activePresetLabel = settings.defaultPresetLabel;
+        activePresetLabel = nextActivePresetLabel(previousActivePresetLabel, previousDefaultPresetLabel);
         renderPresetMenu();
         applyPreset(selectedPreset(), false);
         if (message.status) {
@@ -2636,6 +2715,32 @@ function getPassbandSettings(): PassbandSettings {
     defaultPresetLabel: normalizeDefaultPassbandLabel(presets, configuredDefault),
     markers: markerFeatureSettings(config)
   };
+}
+
+function webviewPassbandSettings(settings: PassbandSettings): PassbandSettings {
+  if (settings.markers.enabled) {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    presets: settings.presets.map(stripPresetMarkers)
+  };
+}
+
+function stripPresetMarkers(preset: PassbandPreset): PassbandPreset {
+  const stripped: PassbandPreset = {
+    label: preset.label,
+    startGHz: preset.startGHz,
+    stopGHz: preset.stopGHz
+  };
+  if (preset.traces) {
+    stripped.traces = preset.traces;
+  }
+  if (preset.renormalize) {
+    stripped.renormalize = preset.renormalize;
+  }
+  return stripped;
 }
 
 function markerFeatureSettings(config: vscode.WorkspaceConfiguration): MarkerFeatureSettings {

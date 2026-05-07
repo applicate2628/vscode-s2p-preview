@@ -8,9 +8,11 @@ test("number inputs handle wheel events without propagating page scroll", () => 
   const handler = extensionSource.match(/function installNumberInputWheelGuard\(\)[\s\S]*?\n    \}/);
 
   assert.ok(handler, "Expected webview script to install a number input wheel guard.");
+  assert.match(handler[0], /document\.addEventListener\("wheel"/);
   assert.match(handler[0], /event\.preventDefault\(\)/);
   assert.match(handler[0], /event\.stopPropagation\(\)/);
   assert.match(handler[0], /stepNumberInputWithWheel\(input, event\.deltaY < 0 \? 1 : -1\)/);
+  assert.doesNotMatch(handler[0], /querySelectorAll\("input\[type=number\]"\)/);
   assert.match(extensionSource, /addEventListener\("wheel"[\s\S]*passive:\s*false/);
 });
 
@@ -91,8 +93,9 @@ test("webview saves current dB markers with passband presets", () => {
   const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
 
   assert.match(extensionSource, /markers\?: PassbandPresetMarker\[\]/);
-  assert.match(extensionSource, /markers: currentMarkerPreset\(\)/);
+  assert.match(extensionSource, /markers: markerSettings\.enabled \? currentMarkerPreset\(\) : undefined/);
   assert.match(extensionSource, /function currentMarkerPreset\(\)/);
+  assert.match(extensionSource, /return sanitizeClientMarkers\(markerState\.markers\);/);
   assert.match(extensionSource, /sanitizePresetMarkers\(item\.markers\)/);
 });
 
@@ -102,6 +105,10 @@ test("package exposes marker feature toggles", () => {
   assert.match(packageSource, /"s2pPreview\.markers\.enabled"/);
   assert.match(packageSource, /"s2pPreview\.markers\.editable"/);
   assert.match(packageSource, /"s2pPreview\.markers\.metrics\.enabled"/);
+  assert.match(packageSource, /"maxItems":\s*10/);
+  assert.match(packageSource, /"maxLength":\s*64/);
+  assert.match(packageSource, /"minimum":\s*-200/);
+  assert.match(packageSource, /"maximum":\s*20/);
 });
 
 test("chart renders axis grid separately from dB marker lines", () => {
@@ -130,14 +137,43 @@ test("marker editor supports add delete value editing and delegated dragging", (
   assert.match(extensionSource, /setPointerCapture/);
 });
 
+test("marker live edits are bounded before rendering or posting", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /function sanitizeClientMarker\(marker\)/);
+  assert.match(extensionSource, /function clampMarkerDb\(db\)/);
+  assert.match(extensionSource, /Math\.min\(MARKER_DB_MAX, Math\.max\(MARKER_DB_MIN, db\)\)/);
+  assert.match(extensionSource, /markerState\.markers\[dbIndex\] = normalized \|\| markerState\.markers\[dbIndex\];/);
+  assert.match(extensionSource, /markerState\.markers\[labelIndex\] = normalized \|\| markerState\.markers\[labelIndex\];/);
+  assert.match(extensionSource, /const db = clampMarkerDb\(markerDbFromPointerEvent\(event\)\);/);
+});
+
 test("marker state follows selected presets and marker feature settings", () => {
   const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+  const settingsHandler = extensionSource.match(/if \(message\.type === "settingsUpdated"\) \{[\s\S]*?\n      \}/);
 
   assert.match(extensionSource, /const markerSettings = settings\.markers/);
   assert.match(extensionSource, /function applyMarkerPreset\(markers\)/);
   assert.match(extensionSource, /applyMarkerPreset\(preset\.markers\)/);
   assert.match(extensionSource, /markerSettings\.enabled/);
   assert.match(extensionSource, /markerSettings\.editable/);
+  assert.match(extensionSource, /function nextActivePresetLabel\(previousActiveLabel, previousDefaultLabel\)/);
+  assert.ok(settingsHandler, "Expected a settings update message handler.");
+  assert.match(settingsHandler[0], /const previousActivePresetLabel = activePresetLabel;/);
+  assert.match(settingsHandler[0], /const previousDefaultPresetLabel = settings\.defaultPresetLabel;/);
+  assert.match(settingsHandler[0], /activePresetLabel = nextActivePresetLabel\(previousActivePresetLabel, previousDefaultPresetLabel\);/);
+  assert.doesNotMatch(settingsHandler[0], /activePresetLabel = settings\.defaultPresetLabel;/);
+  assert.match(extensionSource, /let activePresetLabel = initialActivePresetLabel\(\);/);
+  assert.match(extensionSource, /function persistWebviewState\(\)/);
+  assert.match(extensionSource, /vscode\.setState\(\{[\s\S]*activePresetLabel[\s\S]*\}\);/);
+});
+
+test("marker editor keeps add button available across editability setting changes", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /<button id="add-marker-button" class="secondary-action marker-add-button" type="button"/);
+  assert.match(extensionSource, /addMarkerButton\.hidden = !markerSettings\.enabled \|\| !markerSettings\.editable;/);
+  assert.doesNotMatch(extensionSource, /editable \? `<button id="add-marker-button"/);
 });
 
 test("marker metrics are generated from marker values instead of fixed thresholds", () => {
@@ -155,4 +191,17 @@ test("marker metrics can be disabled independently from marker lines", () => {
 
   assert.match(extensionSource, /markerSettings\.metricsEnabled/);
   assert.match(extensionSource, /id="marker-metrics"/);
+  assert.match(extensionSource, /settings\.markers\.enabled \? sanitizePresetMarkers/);
+  assert.match(extensionSource, /settings\.markers\.enabled && settings\.markers\.metricsEnabled[\s\S]*model\.series\.map/);
+  assert.match(extensionSource, /const seriesRows = markerSettings\.enabled && markerSettings\.metricsEnabled \? markerMetricSeriesRows : \[\];/);
+});
+
+test("disabled marker settings do not send preset marker payloads to webviews", () => {
+  const extensionSource = readFileSync(resolve(__dirname, "../../src/extension.ts"), "utf8");
+
+  assert.match(extensionSource, /broadcastSettingsUpdated\(activePreviewPanels, webviewPassbandSettings\(getPassbandSettings\(\)\)/);
+  assert.match(extensionSource, /const settingsJson = jsonForScript\(webviewPassbandSettings\(settings\)\);/);
+  assert.match(extensionSource, /function webviewPassbandSettings\(settings: PassbandSettings\): PassbandSettings/);
+  assert.match(extensionSource, /presets: settings\.presets\.map\(stripPresetMarkers\)/);
+  assert.match(extensionSource, /function stripPresetMarkers\(preset: PassbandPreset\): PassbandPreset/);
 });

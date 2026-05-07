@@ -144,6 +144,7 @@
               "markers": {
                 "type": "array",
                 "description": "Optional dB marker lines for this preset.",
+                "maxItems": 10,
                 "items": {
                   "type": "object",
                   "required": [
@@ -153,10 +154,13 @@
                   "properties": {
                     "label": {
                       "type": "string",
+                      "maxLength": 64,
                       "description": "Marker label shown in the preview."
                     },
                     "db": {
                       "type": "number",
+                      "minimum": -200,
+                      "maximum": 20,
                       "description": "Marker level in dB."
                     }
                   }

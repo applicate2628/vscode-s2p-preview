@@ -4,6 +4,8 @@ import {
   AUTO_PASSBAND_LABEL,
   DEFAULT_DB_MARKERS,
   DEFAULT_PASSBAND_PRESETS,
+  MAX_DB_MARKER_LABEL_LENGTH,
+  MAX_DB_MARKERS,
   createAutoPassband,
   normalizeDefaultPassbandLabel,
   sanitizePresetMarkers,
@@ -115,6 +117,26 @@ test("sanitizes preset dB markers", () => {
 
   assert.deepEqual(sanitizePresetMarkers([{ label: "bad", db: Number.NaN }]), DEFAULT_DB_MARKERS);
   assert.deepEqual(sanitizePresetMarkers(undefined), DEFAULT_DB_MARKERS);
+  assert.deepEqual(sanitizePresetMarkers([]), []);
+});
+
+test("bounds preset dB markers before rendering", () => {
+  const markers = sanitizePresetMarkers([
+    { label: "x".repeat(MAX_DB_MARKER_LABEL_LENGTH + 10), db: -3 },
+    { label: "too high", db: 40 },
+    { label: "too low", db: -260 },
+    ...Array.from({ length: MAX_DB_MARKERS + 5 }, (_, index) => ({
+      label: `M${index}`,
+      db: -10 - index
+    }))
+  ]);
+
+  assert.equal(markers.length, MAX_DB_MARKERS);
+  assert.equal(markers[0].label.length, MAX_DB_MARKER_LABEL_LENGTH);
+  assert.deepEqual(markers.slice(1, 3), [
+    { label: "M0", db: -10 },
+    { label: "M1", db: -11 }
+  ]);
 });
 
 test("upserts passband presets by label", () => {

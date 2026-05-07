@@ -41,6 +41,11 @@ export const DEFAULT_DB_MARKERS: PassbandPresetMarker[] = [
   { label: "-20 dB", db: -20 }
 ];
 
+export const MAX_DB_MARKERS = 10;
+export const MAX_DB_MARKER_LABEL_LENGTH = 64;
+export const MIN_DB_MARKER_VALUE = -200;
+export const MAX_DB_MARKER_VALUE = 20;
+
 export function normalizeDefaultPassbandLabel(presets: readonly PassbandPreset[], configuredDefault: string | undefined): string {
   if (configuredDefault === AUTO_PASSBAND_LABEL) {
     return AUTO_PASSBAND_LABEL;
@@ -150,6 +155,9 @@ export function sanitizePresetMarkers(value: unknown): PassbandPresetMarker[] {
   if (!Array.isArray(value)) {
     return cloneDefaultDbMarkers();
   }
+  if (value.length === 0) {
+    return [];
+  }
 
   const markers: PassbandPresetMarker[] = [];
   for (const item of value) {
@@ -158,15 +166,22 @@ export function sanitizePresetMarkers(value: unknown): PassbandPresetMarker[] {
     }
 
     const db = Number(item.db);
-    if (!Number.isFinite(db)) {
+    if (
+      !Number.isFinite(db)
+      || db < MIN_DB_MARKER_VALUE
+      || db > MAX_DB_MARKER_VALUE
+    ) {
       continue;
     }
 
     const rawLabel = typeof item.label === "string" ? item.label.trim() : "";
     markers.push({
-      label: rawLabel || `${formatMarkerDb(db)} dB`,
+      label: (rawLabel || `${formatMarkerDb(db)} dB`).slice(0, MAX_DB_MARKER_LABEL_LENGTH),
       db
     });
+    if (markers.length >= MAX_DB_MARKERS) {
+      break;
+    }
   }
 
   return markers.length > 0 ? markers : cloneDefaultDbMarkers();
